@@ -250,6 +250,55 @@ class LoraUnifiedMemoryPool:
         self.free_slots = self.free_slots[need_size:]
 
         return select_index.to(self.device, non_blocking=True)
+    
+    def alloc_contiguous(self, need_size: int):        
+        if need_size > len(self.free_slots):
+            return None
+        
+        # Sort the free slots to find contiguous blocks
+        sorted_slots, _ = torch.sort(self.free_slots)
+        
+        if sorted_slots.numel() == 1:
+            if need_size == 1:
+                select_index = sorted_slots
+                self.free_slots = torch.tensor([], dtype=torch.int32)
+                return select_index.to(self.device)
+            else:
+                return None
+        
+        # Calculate the differences between consecutive elements
+        diff = sorted_slots[1:] - sorted_slots[:-1]
+        # Find positions where the difference is not 1 (indicating a break in contiguous blocks)
+        break_positions = torch.where(diff != 1)[0]
+        
+        # Generate start and end indices for each contiguous segment
+        starts = torch.cat([
+            torch.tensor([0]),
+            break_positions + 1  # Next segment starts after the break
+        ])
+        ends = torch.cat([
+            break_positions + 1,  # End before the break
+            torch.tensor([len(sorted_slots)])
+        ])
+        
+        # Iterate through each segment to find the first one with sufficient length
+        for i in range(len(starts)):
+            start_idx = starts[i].item()
+            end_idx = ends[i].item()
+            segment_length = end_idx - start_idx
+            if segment_length >= need_size:
+                # Extract the contiguous block
+                select_index = sorted_slots[start_idx : start_idx + need_size]
+                # Update remaining free slots by removing the allocated block
+                remaining = torch.cat([
+                    sorted_slots[:start_idx],
+                    sorted_slots[start_idx + need_size:]
+                ])
+                self.free_slots = remaining
+                return select_index.to(device=self.device, non_blocking=True)
+        
+        # No contiguous block of sufficient size found
+        return None
 
     def free(self, free_index: torch.Tensor):
         if free_index.numel() == 0:
@@ -415,14 +464,17 @@ class LoraUnifiedMemoryPool:
     # TODO: please fix this function, we need to take weight_name(q,k,v,o) into account.
     # return parameter: adapter_loc, buffer.
     def get_adapter_memory_info(
-        self, weight_name: str, layer_id: int, lora_type: LoRAType
-    ) -> torch.Tensor:
+        self
+    ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
 
         # if lora_type == LoRAType.LORA_A:
         #     return self.A_buffer[weight_name][layer_id]
 
         # return self.B_buffer[weight_name][layer_id]
         1
+
+    def get_unified_memory_pool(self, layer_id: int)->Tuple[torch.Tensor,torch.Tensor]:
+        return self.unified_k_buffer[layer_id],self.unified_v_buffer[layer_id]
 
     # def get_tensor(self, adapter_id: str, layer_id: int, lora_type: int) -> torch.Tensor:
     #     """
@@ -433,6 +485,15 @@ class LoraUnifiedMemoryPool:
     #         raise ValueError(f"Adapter {adapter_id} not loaded")
     #     A, B = self.get_adapter_weights(adapter_id, layer_id)
     #     return A if lora_type == LoRAType.LORA_A else B
+
+    def get_tensor(
+        self, weight_name: str, layer_id: int, lora_type: LoRAType
+    ) -> torch.Tensor:
+
+        if lora_type == LoRAType.LORA_A:
+            return self.unified_k_buffer[layer_id]
+
+        return self.unified_v_buffer[layer_id]
 
 
     # def get_adapter_weights(self, adapter_id: str, layer_id: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -456,3 +517,10 @@ class LoraUnifiedMemoryPool:
     # def get_tensor_from_adapter(self, adapter_id: str, layer_id: int, lora_type: int) -> torch.Tensor:
     #     """Alias for get_tensor(adapter_id, layer_id, lora_type)."""
     #     return self.get_tensor(adapter_id, layer_id, lora_type)
+
+
+
+
+
+
+
