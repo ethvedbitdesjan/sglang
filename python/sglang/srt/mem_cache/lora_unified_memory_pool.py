@@ -569,31 +569,40 @@ class LoraUnifiedMemoryPool:
                 for j in range(len(selected_indices)):
                     self.unified_k_buffer[layer_id][selected_indices[j]].copy_(weights[j])
             elif 'k' in name or 'v' in name:
-                #pass TODO: only fill up rank cells, not sure
+                #k,v proj, lora_B
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
                 if weight_name is None:
+                    continue
+                proj_index = get_projection_index(weight_name)
+                if proj_index is None:
                     continue
                 c = get_stacked_multiply(weight_name)
                 segment_length = math.ceil(head_ratio * rank)
                 
-                k_offset = 1 * segment_length
-                k_indices = info_loc[k_offset : k_offset + rank]
-                v_offset = 2 * segment_length
-                v_indices = info_loc[v_offset : v_offset + rank]
+                offset = proj_index * segment_length
+                if c > 1:
+                    if weights.shape[2] != self.attention_config.kv_head_num:
+                        assert math.ceil(rank * weights.shape[2] / self.attention_config.kv_head_num) == segment_length
+                        weights = weights.reshape(c, segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                    for stacked_id in range(c):
+                        stacked_offset = offset + segment_length * stacked_id
+                        selected_indices = info_loc[stacked_offset:stacked_offset + rank]
+                        for j in range(len(selected_indices)):
+                            self.unified_k_buffer[layer_id][selected_indices[j]].copy_(weights[stacked_id][j])
+                        dummy_indices = info_loc[stacked_offset + rank:stacked_offset + segment_length]
+                        for j in range(len(selected_indices)):
+                            self.unified_k_buffer[layer_id][dummy_indices[j]].zero_()
+                else:
+                    if weights.shape[1] != self.attention_config.kv_head_num:
+                        assert math.ceil(rank * weights.shape[1] / self.attention_config.kv_head_num) == segment_length
+                        weights = weights.reshape(segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                    selected_indices = info_loc[offset : offset + rank]
+                    for j in range(len(selected_indices)):
+                        self.unified_k_buffer[layer_id][selected_indices[j]].copy_(weights[j])
+                    dummy_indices = info_loc[offset + rank : offset + segment_length]
+                    for j in range(len(selected_indices)):
+                        self.unified_k_buffer[layer_id][dummy_indices[j]].zero_()
                 
-                for j in range(len(k_indices)):
-                    self.unified_v_buffer[layer_id][k_indices[j]].copy_(weights[0][j])
-                for j in range(len(v_indices)):
-                    self.unified_v_buffer[layer_id][v_indices[j]].copy_(weights[1][j])
-                
-                dummy_k_indices = info_loc[k_offset + rank : k_offset + segment_length]
-                dummy_v_indices = info_loc[v_offset + rank : v_offset + segment_length]
-                
-                for j in range(len(dummy_k_indices)):
-                    self.unified_v_buffer[layer_id][dummy_k_indices[j]].zero_()
-
-                for j in range(len(dummy_v_indices)):
-                    self.unified_v_buffer[layer_id][dummy_v_indices[j]].zero_()
                                     
             else:
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
@@ -610,7 +619,8 @@ class LoraUnifiedMemoryPool:
                         assert math.ceil(rank * weights.shape[2] / self.attention_config.kv_head_num) == segment_length
                         weights = weights.reshape(c, segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
                     for stacked_id in range(c):
-                        selected_indices = info_loc[offset:offset + segment_length]
+                        stacked_offset = offset + segment_length * stacked_id
+                        selected_indices = info_loc[stacked_offset:stacked_offset + segment_length]
                         for j in range(len(selected_indices)):
                             self.unified_v_buffer[layer_id][selected_indices[j]].copy_(weights[stacked_id][j])
                 else:
