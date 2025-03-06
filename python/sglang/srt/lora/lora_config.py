@@ -34,6 +34,26 @@ class LoRAConfig:
         self.r = self.hf_config["r"]
         self.lora_alpha = self.hf_config["lora_alpha"]
 
+    def get_rank(self, module_name):
+        """
+        Get rank for a specific module when using multirank.
+        Falls back to default rank if not in rank_pattern.
+        """
+        if not self.is_multirank:
+            return self.r
+            
+        # Handle standard module name format
+        if module_name in self.rank_pattern:
+            return self.rank_pattern[module_name]
+            
+        # Check if it's a pattern match
+        for pattern, rank in self.rank_pattern.items():
+            if pattern in module_name or module_name in pattern:
+                return rank
+                
+        # Default to max rank if no match found
+        return self.r
+
     def get_lora_config(self, dummy=False):
         if dummy:
             raise NotImplementedError()

@@ -24,6 +24,8 @@ class LoRABatchInfo:
 
     # The index of lora adapter used by each sequence, in shape (bs,)
     weight_indices: torch.Tensor
+    # The rank value of each LoRA adapter, in shape (num_lora,)
+    rank_values: torch.Tensor = None
 
 
 class LoRAType(Enum):

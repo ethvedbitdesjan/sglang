@@ -28,6 +28,8 @@ def _qkv_lora_b_kernel(
     weight_indices,
     # Offsets of q/k/v slice on output dimension
     n_offs,
+    # Rank information for multirank support
+    rank_values,  # New parameter for different ranks
     # Meta parameters
     BLOCK_S: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -54,6 +56,10 @@ def _qkv_lora_b_kernel(
     seg_start = tl.load(seg_indptr + batch_id)
     n_start = tl.load(n_offs + qkv_id)
     n_size = tl.load(n_offs + qkv_id + 1) - n_start
+    rank = tl.load(rank_values + w_index)  # Get the rank value of current adapter
+
+    # Adjust K (rank) according to the specific LoRA adapter
+    actual_K = tl.minimum(K, rank)
 
     # The tile in output matrix will have (pid_s, pid_n) as id
     num_pid_n = tl.cdiv(max_qkv_out_dim, BLOCK_N)
@@ -67,37 +73,48 @@ def _qkv_lora_b_kernel(
     n_offset = tl.arange(0, BLOCK_N) + pid_n * BLOCK_N
     k_offset = tl.arange(0, BLOCK_K)
 
-    x_ptrs = (x + seg_start * x_stride_0 + (qkv_id * K) * x_stride_1) + (
-        s_offset[:, None] * x_stride_0 + k_offset[None, :] * x_stride_1
+    k_start = qkv_id * K
+
+    x_ptrs = (x + seg_start * x_stride_0) + (
+        s_offset[:, None] * x_stride_0 + (k_offset[None, :] + k_start) * x_stride_1
     )
-    w_ptrs = (weights + w_index * w_stride_0 + n_start * w_stride_1) + (
-        k_offset[:, None] * w_stride_2 + n_offset[None, :] * w_stride_1
+    w_ptrs = (weights + w_index * w_stride_0) + (
+        (n_offset[None, :] + n_start) * w_stride_1 + k_offset[:, None] * w_stride_2
     )
 
     # Iteate to compute the block in output matrix
     partial_sum = tl.zeros((BLOCK_S, BLOCK_N), dtype=tl.float32)
     for k in range(0, tl.cdiv(K, BLOCK_K)):
-        x_tile = tl.load(
-            x_ptrs,
-            mask=(s_offset[:, None] < seg_len)
-            and (k_offset[None, :] < K - k * BLOCK_K),
-            other=0.0,
-        )
-        w_tile = tl.load(
-            w_ptrs,
-            mask=(k_offset[:, None] < K - k * BLOCK_K) and (n_offset[None, :] < n_size),
-            other=0.0,
-        )
-        partial_sum += tl.dot(x_tile, w_tile)
+        k_block_start = k * BLOCK_K
+        k_block_end = tl.minimum((k + 1) * BLOCK_K, K)
+        k_block_end = tl.minimum(k_block_end, actual_K)  # Limit K to actual rank
+        
+        # Use condition mask instead of break, only compute when k_block_start < k_block_end
+        valid_k = k_block_start < k_block_end
+        if valid_k:
+            # Adjust mask to consider actual rank of the adapter
+            x_tile = tl.load(
+                x_ptrs,
+                mask=(s_offset[:, None] < seg_len)
+                and (k_offset[None, :] < k_block_end - k_block_start),
+                other=0.0,
+            )
+            w_tile = tl.load(
+                w_ptrs,
+                mask=(n_offset[None, :] < n_size)
+                and (k_offset[:, None] < k_block_end - k_block_start),
+                other=0.0,
+            )
+            partial_sum += tl.dot(x_tile, w_tile)
 
-        x_ptrs += BLOCK_K * x_stride_1
-        w_ptrs += BLOCK_K * w_stride_2
+            x_ptrs += BLOCK_K * x_stride_1
+            w_ptrs += BLOCK_K * w_stride_2
 
     # Store result to output matrix
     partial_sum *= scaling
     partial_sum = partial_sum.to(x.dtype.element_ty)
-    output_ptr = (output + seg_start * output_stride_0 + n_start * output_stride_1) + (
-        s_offset[:, None] * output_stride_0 + n_offset[None, :] * output_stride_1
+    output_ptr = (output + seg_start * output_stride_0) + (
+        s_offset[:, None] * output_stride_0 + (n_offset[None, :] + n_start) * output_stride_1
     )
     output_mask = (s_offset[:, None] < seg_len) and (n_offset[None, :] < n_size)
     if fuse_scaling_add:
@@ -155,6 +172,12 @@ def qkv_lora_b_fwd(
         output = base_output
         fuse_scaling_add = True
 
+    # Create default rank tensor if rank_values is not provided
+    if not hasattr(batch_info, 'rank_values') or batch_info.rank_values is None:
+        rank_values = torch.full((len(qkv_lora_b),), r, device=x.device, dtype=torch.int32)
+    else:
+        rank_values = batch_info.rank_values
+
     _qkv_lora_b_kernel[grid_b](
         x,
         qkv_lora_b,
@@ -172,6 +195,7 @@ def qkv_lora_b_fwd(
         batch_info.seg_indptr,
         batch_info.weight_indices,
         output_offset,
+        rank_values,
         BLOCK_S,
         BLOCK_OUT,
         BLOCK_R,

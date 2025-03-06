@@ -21,11 +21,13 @@ def _sgemm_lora_b_kernel(
     w_stride_1,
     w_stride_2,
     output_stride_0,
-    output_stride_1,
+    output_stride_1, 
     # Information on sequence lengths and weight id
     seg_lens,
     seg_indptr,
     weight_indices,
+    # Rank information for multirank support
+    rank_values,  # New parameter for different ranks
     # Meta parameters
     BLOCK_S: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -45,6 +47,10 @@ def _sgemm_lora_b_kernel(
     seg_len = tl.load(seg_lens + batch_id)
     w_index = tl.load(weight_indices + batch_id)
     seg_start = tl.load(seg_indptr + batch_id)
+    rank = tl.load(rank_values + w_index)  # Get the rank value of current adapter
+
+    # Adjust K (rank) according to the specific LoRA adapter
+    actual_K = tl.minimum(K, rank)
 
     # The tile in output matrix will have (pid_s, pid_n) as id
     num_pid_n = tl.cdiv(N, BLOCK_N)
@@ -67,21 +73,28 @@ def _sgemm_lora_b_kernel(
     # Iteate to compute the block in output matrix
     partial_sum = tl.zeros((BLOCK_S, BLOCK_N), dtype=tl.float32)
     for k in range(0, tl.cdiv(K, BLOCK_K)):
-        x_tile = tl.load(
-            x_ptrs,
-            mask=(s_offset[:, None] < seg_len)
-            and (k_offset[None, :] < K - k * BLOCK_K),
-            other=0.0,
-        )
-        w_tile = tl.load(
-            w_ptrs,
-            mask=(k_offset[:, None] < K - k * BLOCK_K),
-            other=0.0,
-        )
-        partial_sum += tl.dot(x_tile, w_tile)
+        k_start = k * BLOCK_K
+        k_end = tl.minimum((k + 1) * BLOCK_K, K)
+        k_end = tl.minimum(k_end, actual_K)  # Limit K to actual rank
+        
+        # Use conditional mask instead of break, only compute when k_start < k_end
+        valid_k = k_start < k_end
+        if valid_k:
+            x_tile = tl.load(
+                x_ptrs,
+                mask=(s_offset[:, None] < seg_len)
+                and (k_offset[None, :] < k_end - k_start),
+                other=0.0,
+            )
+            w_tile = tl.load(
+                w_ptrs,
+                mask=(k_offset[:, None] < k_end - k_start),
+                other=0.0,
+            )
+            partial_sum += tl.dot(x_tile, w_tile)
 
-        x_ptrs += BLOCK_K * x_stride_1
-        w_ptrs += BLOCK_K * w_stride_2
+            x_ptrs += BLOCK_K * x_stride_1
+            w_ptrs += BLOCK_K * w_stride_2
 
     # Store result to output matrix
     partial_sum *= scaling
@@ -134,6 +147,12 @@ def sgemm_lora_b_fwd(
         output = base_output
         fuse_scaling_add = True
 
+    # Create default rank tensor if rank_values is not provided
+    if not hasattr(batch_info, 'rank_values') or batch_info.rank_values is None:
+        rank_values = torch.full((len(weights),), R, device=x.device, dtype=torch.int32)
+    else:
+        rank_values = batch_info.rank_values
+
     _sgemm_lora_b_kernel[grid](
         x,
         weights,
@@ -150,6 +169,7 @@ def sgemm_lora_b_fwd(
         batch_info.seg_lens,
         batch_info.seg_indptr,
         batch_info.weight_indices,
+        rank_values,
         BLOCK_S,
         BLOCK_N,
         BLOCK_R,
