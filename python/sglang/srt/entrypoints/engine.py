@@ -44,12 +44,13 @@ from sglang.srt.managers.io_struct import (
     InitWeightsUpdateGroupReqInput,
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
+    UpdateWeightFromDiskReqInput,
     UpdateWeightsFromDistributedReqInput,
     UpdateWeightsFromTensorReqInput,
 )
 from sglang.srt.managers.scheduler import run_scheduler_process
+from sglang.srt.managers.tokenizer_manager import TokenizerManager
 from sglang.srt.openai_api.adapter import load_chat_template_for_openai_api
-from sglang.srt.orchestration.std.orchestrator import StdOrchestrator
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils import (
@@ -74,12 +75,12 @@ class Engine:
     The entry point to the inference engine.
 
     - The engine consists of three components:
-        1. StdOrchestrator: Tokenizes the requests and sends them to the scheduler.
+        1. TokenizerManager: Tokenizes the requests and sends them to the scheduler.
         2. Scheduler (subprocess): Receives requests from the Tokenizer Manager, schedules batches, forwards them, and sends the output tokens to the Detokenizer Manager.
         3. DetokenizerManager (subprocess): Detokenizes the output tokens and sends the result back to the Tokenizer Manager.
 
     Note:
-    1. The HTTP server, Engine, and StdOrchestrator both run in the main process.
+    1. The HTTP server, Engine, and TokenizerManager both run in the main process.
     2. Inter-process communication is done through ICP (each process uses a different port) via the ZMQ library.
     """
 
@@ -98,12 +99,14 @@ class Engine:
                 kwargs["log_level"] = "error"
             server_args = ServerArgs(**kwargs)
 
-        # Shutdown the subprocesses automatically when the program exists
+        # Shutdown the subprocesses automatically when the program exits
         atexit.register(self.shutdown)
 
         # Launch subprocesses
-        orchestrator, scheduler_info = _launch_subprocesses(server_args=server_args)
-        self.orchestrator = orchestrator
+        tokenizer_manager, scheduler_info = _launch_subprocesses(
+            server_args=server_args
+        )
+        self.tokenizer_manager = tokenizer_manager
         self.scheduler_info = scheduler_info
 
     def generate(
@@ -119,8 +122,10 @@ class Engine:
         return_logprob: Optional[Union[List[bool], bool]] = False,
         logprob_start_len: Optional[Union[List[int], int]] = None,
         top_logprobs_num: Optional[Union[List[int], int]] = None,
+        token_ids_logprob: Optional[Union[List[List[int]], List[int]]] = None,
         lora_path: Optional[List[Optional[str]]] = None,
         custom_logit_processor: Optional[Union[List[str], str]] = None,
+        return_hidden_states: bool = False,
         stream: bool = False,
     ) -> Union[Dict, Iterator[Dict]]:
         """
@@ -139,13 +144,15 @@ class Engine:
             return_logprob=return_logprob,
             logprob_start_len=logprob_start_len,
             top_logprobs_num=top_logprobs_num,
+            token_ids_logprob=token_ids_logprob,
             lora_path=lora_path,
             modalities=modalities_list,
             custom_logit_processor=custom_logit_processor,
+            return_hidden_states=return_hidden_states,
             stream=stream,
         )
         loop = asyncio.get_event_loop()
-        generator = self.orchestrator.generate_request(obj, None)
+        generator = self.tokenizer_manager.generate_request(obj, None)
 
         if stream:
 
@@ -175,6 +182,7 @@ class Engine:
         return_logprob: Optional[Union[List[bool], bool]] = False,
         logprob_start_len: Optional[Union[List[int], int]] = None,
         top_logprobs_num: Optional[Union[List[int], int]] = None,
+        token_ids_logprob: Optional[Union[List[List[int]], List[int]]] = None,
         lora_path: Optional[List[Optional[str]]] = None,
         custom_logit_processor: Optional[Union[List[str], str]] = None,
         stream: bool = False,
@@ -191,11 +199,12 @@ class Engine:
             return_logprob=return_logprob,
             logprob_start_len=logprob_start_len,
             top_logprobs_num=top_logprobs_num,
+            token_ids_logprob=token_ids_logprob,
             lora_path=lora_path,
             stream=stream,
             custom_logit_processor=custom_logit_processor,
         )
-        generator = self.orchestrator.generate_request(obj, None)
+        generator = self.tokenizer_manager.generate_request(obj, None)
 
         if stream is True:
             return generator
@@ -213,7 +222,7 @@ class Engine:
 
         obj = EmbeddingReqInput(text=prompt)
         loop = asyncio.get_event_loop()
-        generator = self.orchestrator.generate_request(obj, None)
+        generator = self.tokenizer_manager.generate_request(obj, None)
         ret = loop.run_until_complete(generator.__anext__())
         return ret
 
@@ -222,15 +231,22 @@ class Engine:
         kill_process_tree(os.getpid(), include_parent=False)
 
     def start_profile(self):
-        self.orchestrator.start_profile()
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(self.tokenizer_manager.start_profile())
 
     def stop_profile(self):
-        self.orchestrator.stop_profile()
+        self.tokenizer_manager.stop_profile()
 
     def get_server_info(self):
+        loop = asyncio.get_event_loop()
+        internal_states = loop.run_until_complete(
+            self.tokenizer_manager.get_internal_state()
+        )
+
         return {
-            **dataclasses.asdict(self.orchestrator.server_args),  # server args
+            **dataclasses.asdict(self.tokenizer_manager.server_args),
             **self.scheduler_info,
+            **internal_states,
             "version": __version__,
         }
 
@@ -254,7 +270,7 @@ class Engine:
         )
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.orchestrator.init_weights_update_group(obj, None)
+            self.tokenizer_manager.init_weights_update_group(obj, None)
         )
 
     def update_weights_from_distributed(self, name: str, dtype, shape):
@@ -266,31 +282,62 @@ class Engine:
         )
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.orchestrator.update_weights_from_distributed(obj, None)
+            self.tokenizer_manager.update_weights_from_distributed(obj, None)
         )
 
-    def update_weights_from_tensor(self, named_tensors: List[Tuple[str, torch.Tensor]]):
-        """Update weights from distributed source."""
+    def update_weights_from_tensor(
+        self,
+        named_tensors: List[Tuple[str, torch.Tensor]],
+        load_format: Optional[str] = None,
+        flush_cache: bool = True,
+    ):
+        """Update weights from distributed source. If there are going to be more updates, set `flush_cache` to be true
+        to avoid duplicated operations such as clearing cache."""
         obj = UpdateWeightsFromTensorReqInput(
-            serialized_named_tensors=MultiprocessingSerializer.serialize(named_tensors)
+            serialized_named_tensors=MultiprocessingSerializer.serialize(named_tensors),
+            load_format=load_format,
+            flush_cache=flush_cache,
         )
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.orchestrator.update_weights_from_tensor(obj, None)
+            self.tokenizer_manager.update_weights_from_tensor(obj, None)
+        )
+
+    def update_weights_from_disk(
+        self,
+        model_path: str,
+        load_format: Optional[str] = None,
+    ):
+        """Update the weights from disk inplace without re-launching the engine.
+
+        This method allows updating the model weights from disk without restarting
+        the engine. It can be used to load a different model or update weights with
+        new training.
+        """
+        obj = UpdateWeightFromDiskReqInput(
+            model_path=model_path,
+            load_format=load_format,
+        )
+
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(
+            self.tokenizer_manager.update_weights_from_disk(obj, None)
         )
 
     def get_weights_by_name(self, name: str, truncate_size: int = 100):
         """Get weights by parameter name."""
         obj = GetWeightsByNameReqInput(name=name, truncate_size=truncate_size)
         loop = asyncio.get_event_loop()
-        return loop.run_until_complete(self.orchestrator.get_weights_by_name(obj, None))
+        return loop.run_until_complete(
+            self.tokenizer_manager.get_weights_by_name(obj, None)
+        )
 
     def release_memory_occupation(self):
         """Release GPU occupation temporarily."""
         obj = ReleaseMemoryOccupationReqInput()
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.orchestrator.release_memory_occupation(obj, None)
+            self.tokenizer_manager.release_memory_occupation(obj, None)
         )
 
     def resume_memory_occupation(self):
@@ -298,7 +345,7 @@ class Engine:
         obj = ResumeMemoryOccupationReqInput()
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(
-            self.orchestrator.resume_memory_occupation(obj, None)
+            self.tokenizer_manager.resume_memory_occupation(obj, None)
         )
 
 
@@ -309,6 +356,7 @@ def _set_envs_and_config(server_args: ServerArgs):
     os.environ["NCCL_NVLS_ENABLE"] = str(int(server_args.enable_nccl_nvls))
     os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
     os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "4"
+    os.environ["CUDA_MODULE_LOADING"] = "AUTO"
 
     # Set prometheus env vars
     if server_args.enable_metrics:
@@ -326,18 +374,29 @@ def _set_envs_and_config(server_args: ServerArgs):
     if server_args.attention_backend == "flashinfer":
         assert_pkg_version(
             "flashinfer_python",
-            "0.2.1.post2",
+            "0.2.2.post1",
             "Please uninstall the old version and "
             "reinstall the latest version by following the instructions "
             "at https://docs.flashinfer.ai/installation.html.",
         )
+
+    def sigchld_handler(signum, frame):
+        pid, exitcode = os.waitpid(0, os.WNOHANG)
+        if exitcode != 0:
+            logger.warning(
+                "Child process unexpectedly failed with an exit code %d. pid=%d",
+                exitcode,
+                pid,
+            )
+
+    signal.signal(signal.SIGCHLD, sigchld_handler)
 
     # Register the signal handler.
     # The child processes will send SIGQUIT to this process when any error happens
     # This process then clean up the whole process tree
     def sigquit_handler(signum, frame):
         logger.error(
-            "Received sigquit from a child proces. It usually means the child failed."
+            "Received sigquit from a child process. It usually means the child failed."
         )
         kill_process_tree(os.getpid())
 
@@ -347,9 +406,9 @@ def _set_envs_and_config(server_args: ServerArgs):
     mp.set_start_method("spawn", force=True)
 
 
-def _launch_subprocesses(server_args: ServerArgs) -> Tuple[StdOrchestrator, Dict]:
+def _launch_subprocesses(server_args: ServerArgs) -> Tuple[TokenizerManager, Dict]:
     """
-    Launch the StdOrchestrator in the main process, the Scheduler in a subprocess, and the DetokenizerManager in another subprocess.
+    Launch the TokenizerManager in the main process, the Scheduler in a subprocess, and the DetokenizerManager in another subprocess.
     """
     # Configure global environment
     configure_logger(server_args)
@@ -380,7 +439,10 @@ def _launch_subprocesses(server_args: ServerArgs) -> Tuple[StdOrchestrator, Dict
         )
         for tp_rank in tp_rank_range:
             reader, writer = mp.Pipe(duplex=False)
-            gpu_id = server_args.base_gpu_id + tp_rank % tp_size_per_node
+            gpu_id = (
+                server_args.base_gpu_id
+                + (tp_rank % tp_size_per_node) * server_args.gpu_id_step
+            )
             proc = mp.Process(
                 target=run_scheduler_process,
                 args=(server_args, port_args, gpu_id, tp_rank, None, writer),
@@ -432,10 +494,10 @@ def _launch_subprocesses(server_args: ServerArgs) -> Tuple[StdOrchestrator, Dict
     detoken_proc.start()
 
     # Launch tokenizer process
-    orchestrator = StdOrchestrator(server_args, port_args)
+    tokenizer_manager = TokenizerManager(server_args, port_args)
     if server_args.chat_template:
         load_chat_template_for_openai_api(
-            orchestrator, server_args.chat_template, server_args.model_path
+            tokenizer_manager, server_args.chat_template, server_args.model_path
         )
 
     # Wait for the model to finish loading
@@ -459,5 +521,5 @@ def _launch_subprocesses(server_args: ServerArgs) -> Tuple[StdOrchestrator, Dict
 
     # Assume all schedulers have the same scheduler_info
     scheduler_info = scheduler_infos[0]
-    orchestrator.configure_max_req_input_len(scheduler_info["max_req_input_len"])
-    return orchestrator, scheduler_info
+    tokenizer_manager.max_req_input_len = scheduler_info["max_req_input_len"]
+    return tokenizer_manager, scheduler_info
