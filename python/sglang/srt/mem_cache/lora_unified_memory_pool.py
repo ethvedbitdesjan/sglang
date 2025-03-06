@@ -568,30 +568,32 @@ class LoraUnifiedMemoryPool:
                     weights = weights.reshape(segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
                 for j in range(len(selected_indices)):
                     self.unified_k_buffer[layer_id][selected_indices[j]].copy_(weights[j])
-            # elif 'kv' in name:
-            #     #pass TODO: only fill up rank cells, not sure
-            #     weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
-            #     c = get_stacked_multiply(weight_name)
-            #     segment_length = head_ratio * rank
+            elif 'k' in name or 'v' in name:
+                #pass TODO: only fill up rank cells, not sure
+                weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
+                if weight_name is None:
+                    continue
+                c = get_stacked_multiply(weight_name)
+                segment_length = math.ceil(head_ratio * rank)
                 
-            #     k_offset = 1 * head_ratio * rank
-            #     k_indices = info_loc[k_offset : k_offset + rank]
-            #     v_offset = 2 * head_ratio * rank
-            #     v_indices = info_loc[v_offset : v_offset + rank]
+                k_offset = 1 * segment_length
+                k_indices = info_loc[k_offset : k_offset + rank]
+                v_offset = 2 * segment_length
+                v_indices = info_loc[v_offset : v_offset + rank]
                 
-            #     for j in range(k_indices):
-            #         self.unified_v_buffer[layer_id][k_indices[j]].copy_(weights[0][j])
-            #     for j in range(v_indices):
-            #         self.unified_v_buffer[layer_id][v_indices[j]].copy_(weights[1][j])
+                for j in range(len(k_indices)):
+                    self.unified_v_buffer[layer_id][k_indices[j]].copy_(weights[0][j])
+                for j in range(len(v_indices)):
+                    self.unified_v_buffer[layer_id][v_indices[j]].copy_(weights[1][j])
                 
-            #     dummy_k_indices = info_loc[k_offset + rank : k_offset + segment_length]
-            #     dummy_v_indices = info_loc[v_offset + rank : v_offset + segment_length]
+                dummy_k_indices = info_loc[k_offset + rank : k_offset + segment_length]
+                dummy_v_indices = info_loc[v_offset + rank : v_offset + segment_length]
                 
-            #     for j in range(len(dummy_k_indices)):
-            #         self.unified_v_buffer[layer_id][dummy_k_indices[j]].zero_()
+                for j in range(len(dummy_k_indices)):
+                    self.unified_v_buffer[layer_id][dummy_k_indices[j]].zero_()
 
-            #     for j in range(len(dummy_v_indices)):
-            #         self.unified_v_buffer[layer_id][dummy_v_indices[j]].zero_()
+                for j in range(len(dummy_v_indices)):
+                    self.unified_v_buffer[layer_id][dummy_v_indices[j]].zero_()
                                     
             else:
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
