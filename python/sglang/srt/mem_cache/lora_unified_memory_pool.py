@@ -18,6 +18,18 @@ GB = 1024 * 1024 * 1024
 ############################################
 # Data classes for block and adapter tracking
 ############################################
+def get_projection_index(weight_name: str) -> Optional[int]:
+    mapping = {
+        "q_proj": 0,
+        "k_proj": 1,
+        "v_proj": 2,
+        "o_proj": 3,
+        "qkv_proj": 0,
+        "kv_proj": 1,
+        "gate_up_proj": 4,
+        "down_proj": 5,
+    }
+    return mapping.get(weight_name, None)
 
 @dataclass
 class AdapterInfo:
@@ -289,6 +301,7 @@ class LoraUnifiedMemoryPool:
                 raise ValueError(f"Unsupported attention type: {self.attention_type}")
 
         self.active_adapters: Dict[str, AdapterInfo] = {}
+        self.cur_adapters: Dict[str, AdapterInfo] = {}
         self.access_counter = 0
         self.lora_weight_names: Set[Tuple[str, ...]] = set()
         self.adapter_to_idx: Dict[str, int] = {}
@@ -369,15 +382,16 @@ class LoraUnifiedMemoryPool:
     def alloc_lora_adapter(self, adapter_id: str, rank: int) -> bool:
         if self.attention_type == AttentionType.MHA:
             head_ratio = self.attention_config.attn_head_num / self.attention_config.kv_head_num
-            required_size = math.ceil(rank * 4 * head_ratio)
+            required_size = math.ceil(rank * (4+2) * head_ratio)
         elif self.attention_type == AttentionType.MLA:
             total_dims = self.attention_config.kv_lora_rank + self.attention_config.qk_rope_head_dim
-            required_size = math.ceil(rank * 4 * (total_dims / self.attention_config.head_dim))
+            required_size = math.ceil(rank * (4+2) * (total_dims / self.attention_config.head_dim))
         else:
             raise ValueError(f"Unsupported attention type: {self.attention_type}")
 
         adapter_loc = self.alloc(required_size)
         if adapter_loc is None:
+            #raise error, no need to evict
             success = self._evict_lru_adapters(required_size)
             if not success:
                 return False
@@ -448,11 +462,13 @@ class LoraUnifiedMemoryPool:
         self.lora_weight_names = lora_weight_names
 
     def prepare_lora_batch(self, cur_uids: Set[Optional[str]], lora_adapters: Dict[str, LoRAAdapter]):
+        self.cur_adapters = {}
         for uid in cur_uids:
             if uid is None:
                 continue
             if uid in self.active_adapters:
                 self.active_adapters[uid].last_used = self.access_counter
+                self.cur_adapters[uid] = self.active_adapters[uid]
                 self.access_counter += 1
                 continue
             adapter = lora_adapters.get(uid, None)
@@ -462,150 +478,166 @@ class LoraUnifiedMemoryPool:
             if not success:
                 raise ValueError(f"Cannot allocate memory for adapter {uid}")
             self.load_lora_weight_to_buffer(uid, lora_adapter=adapter)
+            self.cur_adapters[uid] = self.active_adapters[uid]        
 
     def load_lora_weight_to_buffer(self, uid: str, lora_adapter: Optional[LoRAAdapter] = None):
-        if uid is None:
+        if uid is None or lora_adapter is None:
             return
-        if lora_adapter is None:
-            raise ValueError(f"lora_adapter must be provided for uid {uid}")
+    
         if uid not in self.active_adapters:
-            raise ValueError(f"Adapter {uid} not allocated")
+            raise ValueError(f"Adapter {uid} not allocated in the memory pool")
         info = self.active_adapters[uid]
-        rank = lora_adapter.r
         for layer_id in range(self.layer_num):
             layer_weights = lora_adapter.layers[layer_id].weights
-            logger.info(f"Loading weights for adapter {uid} layer {layer_id}")
+        # Route to the appropriate implementation based on attention type
             if self.attention_type == AttentionType.MHA:
-                self._load_weights_mha(layer_id, info.loc, rank, layer_weights)
+                self._load_weights_mha(layer_id, info.loc, info.rank, layer_weights)
             elif self.attention_type == AttentionType.MLA:
-                self._load_weights_mla(layer_id, info.loc, rank, layer_weights)
+                raise NotImplementedError("MLA attention type not yet implemented")
             else:
                 raise ValueError(f"Unsupported attention type: {self.attention_type}")
+            
 
-    def _load_weights_mha(self, layer_id: int, loc: torch.Tensor, rank: int, layer_weights: Dict[str, torch.Tensor]):
-        """
-        Load MHA (Multi-Head Attention) LoRA weights into the unified buffer.
+    def _load_weights_mha(self, layer_id: int, info_loc: torch.Tensor, rank: int, layer_weights: Dict[str, torch.Tensor]):
+        # Process lora_A weights
+        head_ratio = self.attention_config.attn_head_num / self.attention_config.kv_head_num
         
-        Args:
-            layer_id: The layer ID to load weights for
-            loc: Location indices in the unified buffer
-            rank: The LoRA rank
-            layer_weights: Dictionary of layer weights
-        """
-        # Load lora_A weights
-        keys_A = ['q_proj.lora_A.weight', 'k_proj.lora_A.weight', 
-                'v_proj.lora_A.weight', 'o_proj.lora_A.weight']
-        
-        for i, key in enumerate(keys_A):
-            if key in layer_weights:
-                weight = layer_weights[key]
-                # The weights are already in the correct shape from the test (r, attn_head, head_dim)
-                # We need to scale from attn_head to kv_head if necessary
-                if weight.shape[1] != self.attention_config.kv_head_num:
-                    ratio = int(round(weight.shape[1] / self.attention_config.kv_head_num))
-                    weight = weight.reshape(rank, self.attention_config.kv_head_num, ratio, self.attention_config.head_dim).mean(dim=2)
+        for name, weights in layer_weights.items():
+            if "lora_A" in name:
+                weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_A)
+                if weight_name is None:
+                    continue
+                proj_index = get_projection_index(weight_name)
+                if proj_index is None:
+                    continue
+                segment_length = math.ceil(head_ratio * rank)
+                offset = proj_index * segment_length
+                selected_indices = info_loc[offset : offset + segment_length]
+                # If necessary, reshape weights if the inner dimension does not match
+                if weights.shape[1] != self.attention_config.kv_head_num:
+                    assert math.ceil(rank * weights.shape[1]/self.attention_config.kv_head_num) == segment_length
+                    weights = weights.reshape(segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                for j in range(len(selected_indices)):
+                    self.unified_k_buffer[layer_id][selected_indices[j]].copy_(weights[j])
+            # elif 'kv' in name:
+            #     #pass TODO: only fill up rank cells, not sure
+            #     weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
+            #     c = get_stacked_multiply(weight_name)
+            #     segment_length = head_ratio * rank
                 
-                # Select the appropriate range of indices to store this weight matrix
-                offset = i * rank
-                end_offset = offset + rank
-                selected_indices = loc[offset:end_offset]
+            #     k_offset = 1 * head_ratio * rank
+            #     k_indices = info_loc[k_offset : k_offset + rank]
+            #     v_offset = 2 * head_ratio * rank
+            #     v_indices = info_loc[v_offset : v_offset + rank]
                 
-                # Make sure the weight is the right shape before copying
-                # In the buffer, each index holds a (kv_head_num, head_dim) tensor
-                for j in range(rank):
-                    if j < len(selected_indices):
-                        with open('intermediate.txt', 'a') as f:
-                            f.write(f"{layer_id} {selected_indices[j]} {weight[j]}")
-                        self.unified_k_buffer[layer_id][selected_indices[j]].copy_(weight[j])
-        
-        # Load lora_B weights
-        keys_B = ['q_proj.lora_B.weight', 'k_proj.lora_B.weight', 
-                'v_proj.lora_B.weight', 'o_proj.lora_B.weight']
-        
-        for i, key in enumerate(keys_B):
-            if key in layer_weights:
-                weight = layer_weights[key]
-                # Same downsampling logic as above
-                if weight.shape[1] != self.attention_config.kv_head_num:
-                    ratio = int(round(weight.shape[1] / self.attention_config.kv_head_num))
-                    weight = weight.reshape(rank, self.attention_config.kv_head_num, ratio, self.attention_config.head_dim).mean(dim=2)
+            #     for j in range(k_indices):
+            #         self.unified_v_buffer[layer_id][k_indices[j]].copy_(weights[0][j])
+            #     for j in range(v_indices):
+            #         self.unified_v_buffer[layer_id][v_indices[j]].copy_(weights[1][j])
                 
-                # Select the appropriate range of indices
-                offset = i * rank
-                end_offset = offset + rank
-                selected_indices = loc[offset:end_offset]
+            #     dummy_k_indices = info_loc[k_offset + rank : k_offset + segment_length]
+            #     dummy_v_indices = info_loc[v_offset + rank : v_offset + segment_length]
                 
-                # Copy each row of the weight matrix to the corresponding index
-                for j in range(rank):
-                    if j < len(selected_indices):
-                        self.unified_v_buffer[layer_id][selected_indices[j]].copy_(weight[j])
+            #     for j in range(len(dummy_k_indices)):
+            #         self.unified_v_buffer[layer_id][dummy_k_indices[j]].zero_()
+
+            #     for j in range(len(dummy_v_indices)):
+            #         self.unified_v_buffer[layer_id][dummy_v_indices[j]].zero_()
+                                    
+            else:
+                weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
+                if weight_name is None:
+                    continue
+                proj_index = get_projection_index(weight_name)
+                if proj_index is None:
+                    continue
+                c = get_stacked_multiply(weight_name)
+                segment_length = math.ceil(head_ratio * rank)
+                offset = proj_index * segment_length
+                if c > 1:
+                    if weights.shape[2] != self.attention_config.kv_head_num:
+                        assert math.ceil(rank * weights.shape[2] / self.attention_config.kv_head_num) == segment_length
+                        weights = weights.reshape(c, segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                    for stacked_id in range(c):
+                        selected_indices = info_loc[offset:offset + segment_length]
+                        for j in range(len(selected_indices)):
+                            self.unified_v_buffer[layer_id][selected_indices[j]].copy_(weights[stacked_id][j])
+                else:
+                    if weights.shape[1] != self.attention_config.kv_head_num:
+                        assert math.ceil(rank * weights.shape[1] / self.attention_config.kv_head_num) == segment_length
+                        weights = weights.reshape(segment_length, self.attention_config.kv_head_num, 
+                                            self.attention_config.head_dim)
+                        
+                    selected_indices = info_loc[offset : offset + segment_length]
+                    for j in range(len(selected_indices)):
+                        self.unified_v_buffer[layer_id][selected_indices[j]].copy_(weights[j])
+
 
     def _load_weights_mla(self, layer_id: int, loc: torch.Tensor, rank: int, layer_weights: Dict[str, torch.Tensor]):
-        offset = 0
-        for key in layer_weights:
-            if 'lora_A' in key:
-                weight = layer_weights[key]
-                weight_size = rank
-                self.unified_kv_buffer[layer_id][loc[offset:offset + weight_size]].copy_(weight)
-                offset += weight_size
-        offset = 0
-        for key in layer_weights:
-            if 'lora_B' in key:
-                weight = layer_weights[key]
-                weight_size = rank
-                half_point = len(loc) // 2
-                self.unified_kv_buffer[layer_id][loc[half_point + offset:half_point + offset + weight_size]].copy_(weight)
-                offset += weight_size
+        raise NotImplementedError("MLA attention type not yet implemented")
 
-    def get_adapter_memory_info(
-        self, weight_name: str, layer_id: int, lora_type: LoRAType
-    ) -> torch.Tensor:
-        if not self.active_adapters:
-            return torch.tensor([], dtype=torch.long, device=self.device)
-        matrix_idx = 0
-        if 'q_proj' in weight_name:
-            matrix_idx = 0
-        elif 'k_proj' in weight_name:
-            matrix_idx = 1
-        elif 'v_proj' in weight_name:
-            matrix_idx = 2
-        elif 'o_proj' in weight_name:
-            matrix_idx = 3
-        adapter_locations = []
-        for adapter_id, info in self.active_adapters.items():
-            rank = info.rank
-            if lora_type == LoRAType.LORA_A:
-                offset = matrix_idx * rank
-                adapter_loc = info.loc[offset:offset+rank]
-            else:
-                if self.attention_type == AttentionType.MHA:
-                    offset = matrix_idx * rank
-                    adapter_loc = info.loc[offset:offset+rank]
-                else:
-                    half_point = len(info.loc) // 2
-                    offset = matrix_idx * rank
-                    adapter_loc = info.loc[half_point + offset:half_point + offset + rank]
-            adapter_locations.append(adapter_loc)
-        return torch.cat(adapter_locations)
 
-    def get_buffer_id(self, adapter_id: Optional[str]) -> int:
-        if adapter_id is None:
-            return -1
-        if adapter_id not in self.adapter_to_idx:
-            raise ValueError(f"Adapter {adapter_id} not loaded")
-        return self.adapter_to_idx[adapter_id]
+    def get_adapter_memory_info(self, adapter_cache_type: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if not self.cur_adapters:
+            # Return empty tensors when no adapters are present
+            empty = torch.tensor([], dtype=torch.long, device=self.device)
+            return empty, empty, empty
 
-    def get_tensor(
-        self, weight_name: str, layer_id: int, lora_type: LoRAType
-    ) -> torch.Tensor:
-        loc = self.get_adapter_memory_info(weight_name, layer_id, lora_type)
-        if lora_type == LoRAType.LORA_A:
-            if self.attention_type == AttentionType.MHA:
-                return self.unified_k_buffer[layer_id][loc]
-            else:
-                return self.unified_kv_buffer[layer_id][loc]
+        if self.attention_type != AttentionType.MHA:
+            raise NotImplementedError("Only MHA is currently supported")
+        
+        head_ratio = self.attention_config.attn_head_num / self.attention_config.kv_head_num
+        locs = []
+        starts = []
+        lens = []
+        if adapter_cache_type == "qkvo":
+            for adapter_id, info in self.cur_adapters.items():
+                rank = info.rank
+                segment_length = int(math.ceil(head_ratio * rank))
+                for i in range(4):
+                    offset = i * segment_length
+                    end_offset = offset + segment_length
+                    
+                    # Get location indices
+                    if end_offset <= len(info.loc):
+                        adapter_loc = info.loc[offset:end_offset]
+                        
+                        locs.append(adapter_loc)
+                        starts.append(torch.zeros(1, dtype=torch.long, device=self.device))
+                        
+                        # Always return head_ratio * rank for consistency even though for lora_B we only use the first rank cells
+                        lens.append(torch.tensor([segment_length], dtype=torch.long, device=self.device))
+        elif adapter_cache_type == "gate_up":
+            pass
+        elif adapter_cache_type == "down":
+            pass
         else:
-            if self.attention_type == AttentionType.MHA:
-                return self.unified_v_buffer[layer_id][loc]
-            else:
-                return self.unified_kv_buffer[layer_id][loc]
+            raise ValueError(f"Unsupported adapter cache type: {adapter_cache_type}")
+        
+        return (
+            torch.cat(locs) if locs else torch.tensor([], dtype=torch.long, device=self.device),
+            torch.cat(starts) if starts else torch.tensor([], dtype=torch.long, device=self.device),
+            torch.cat(lens) if lens else torch.tensor([], dtype=torch.long, device=self.device)
+        )
+
+    # def get_buffer_id(self, adapter_id: Optional[str]) -> int:
+    #     if adapter_id is None:
+    #         return -1
+    #     if adapter_id not in self.adapter_to_idx:
+    #         raise ValueError(f"Adapter {adapter_id} not loaded")
+    #     return self.adapter_to_idx[adapter_id]
+
+    # def get_tensor(
+    #     self, weight_name: str, layer_id: int, lora_type: LoRAType
+    # ) -> torch.Tensor:
+    #     loc = self.get_adapter_memory_info(weight_name, layer_id, lora_type)
+    #     if lora_type == LoRAType.LORA_A:
+    #         if self.attention_type == AttentionType.MHA:
+    #             return self.unified_k_buffer[layer_id][loc]
+    #         else:
+    #             return self.unified_kv_buffer[layer_id][loc]
+    #     else:
+    #         if self.attention_type == AttentionType.MHA:
+    #             return self.unified_v_buffer[layer_id][loc]
+    #         else:
+    #             return self.unified_kv_buffer[layer_id][loc]
