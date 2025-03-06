@@ -7,6 +7,7 @@ from sglang.srt.lora.utils import LoRABatchInfo
 
 def get_fuse_output_scaling_add_from_name(name: str) -> bool:
     mapping = {
+        "unified_triton": True,
         "triton": True,
         "flashinfer": False,
     }
@@ -15,6 +16,7 @@ def get_fuse_output_scaling_add_from_name(name: str) -> bool:
 
 def get_fuse_stacked_lora_b_from_name(name: str) -> bool:
     mapping = {
+        "unified_triton": True,
         "triton": True,
         "flashinfer": False,
     }

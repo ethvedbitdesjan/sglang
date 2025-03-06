@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 
+from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
 from sglang.srt.distributed import (
     get_tensor_model_parallel_rank,
     split_tensor_along_last_dim,
@@ -142,9 +143,8 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
             else base_output + lora_output * self.scaling
         )
 
-
 class QKVParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
-    def init__(
+    def __init__(
         self,
         base_layer: QKVParallelLinear,
         lora_rank: int,
