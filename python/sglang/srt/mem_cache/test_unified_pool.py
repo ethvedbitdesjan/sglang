@@ -9,6 +9,7 @@ from lora_unified_memory_pool import (
 )
 
 # Dummy adapter layer with predictable weights
+# Dummy adapter layer with predictable weights
 class DummyLoRAAdapterLayer:
     def __init__(self, r: int, attn_head: int, kv_head: int,head_dim: int):
         # Create dummy weights with shape (r, attn_head, head_dim)
@@ -61,6 +62,10 @@ class TestUnifiedMemoryPool(unittest.TestCase):
         """Test that weights are correctly loaded for MHA.
            This verifies that the transformed weight in unified_k_buffer matches expectation.
         """
+        import math
+        """Test that weights are correctly loaded for MHA.
+           This verifies that the transformed weight in unified_k_buffer matches expectation.
+        """
         adapter = DummyLoRAAdapter(r=2, num_layers=self.layer_num,
                                  attn_head=self.attn_config.attn_head_num,
                                  kv_head= self.attn_config.kv_head_num,
@@ -88,6 +93,7 @@ class TestUnifiedMemoryPool(unittest.TestCase):
                         "Segment lengths returned do not match expected segment length.")
 
     def test_alloc_free_slots(self):
+        """Test that allocation and freeing of memory slots behaves correctly."""
         """Test that allocation and freeing of memory slots behaves correctly."""
         self.pool.clear()
         expected_count = self.total_size
@@ -128,6 +134,7 @@ class TestUnifiedMemoryPool(unittest.TestCase):
 
     def test_adapter_management(self):
         """Test that adapters are correctly added and removed from the pool."""
+        """Test that adapters are correctly added and removed from the pool."""
         adapter = DummyLoRAAdapter(r=2, num_layers=self.layer_num,
                                    attn_head=self.attn_config.attn_head_num,
                                    kv_head=self.attn_config.kv_head_num,
@@ -142,6 +149,7 @@ class TestUnifiedMemoryPool(unittest.TestCase):
 
     def test_get_tensor(self):
         """Emulate get_tensor behavior by comparing a slice of unified_k_buffer for LORA_A."""
+        """Emulate get_tensor behavior by comparing a slice of unified_k_buffer for LORA_A."""
         adapter = DummyLoRAAdapter(r=2, num_layers=self.layer_num,
                                    attn_head=self.attn_config.attn_head_num,
                                    kv_head=self.attn_config.kv_head_num,
@@ -149,14 +157,18 @@ class TestUnifiedMemoryPool(unittest.TestCase):
         lora_adapters = {"adapterA": adapter}
         self.pool.prepare_lora_batch({"adapterA"}, lora_adapters)
         # Here we assume get_tensor would return the same slice as in unified_k_buffer for LORA_A.
+        # Here we assume get_tensor would return the same slice as in unified_k_buffer for LORA_A.
         info = self.pool.active_adapters["adapterA"]
         start = int(info.loc[0].item())
+        tensor_A = self.pool.unified_k_buffer[0][start: start + adapter.r]
+        expected_tensor = tensor_A  # since weights were copied during prepare_lora_batch
         tensor_A = self.pool.unified_k_buffer[0][start: start + adapter.r]
         expected_tensor = tensor_A  # since weights were copied during prepare_lora_batch
         self.assertTrue(torch.allclose(tensor_A, expected_tensor, atol=1e-3),
                         "get_tensor did not return the expected tensor for LORA_A.")
 
     def test_get_kv_size_bytes(self):
+        """Test that get_kv_size_bytes returns the correct total size for K and V buffers."""
         """Test that get_kv_size_bytes returns the correct total size for K and V buffers."""
         k_size, v_size = self.pool.get_kv_size_bytes()
         expected_k = sum(np.prod(buf.shape) * buf.dtype.itemsize for buf in self.pool.unified_k_buffer)
