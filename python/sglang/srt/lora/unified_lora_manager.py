@@ -27,6 +27,7 @@ from sglang.srt.lora.layers import get_lora_layer,get_unified_lora_layer
 from sglang.srt.lora.lora import LoRAAdapter
 from sglang.srt.lora.lora_config import LoRAConfig
 from sglang.srt.mem_cache.lora_unified_memory_pool import LoraUnifiedMemoryPool
+from sglang.srt.hf_transformers_utils import AutoConfig
 from sglang.srt.lora.utils import (
     UnifiedLoRABatchInfo,
     LoRAType,
