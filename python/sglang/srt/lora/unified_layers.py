@@ -15,23 +15,22 @@ from sglang.srt.layers.linear import (
     RowParallelLinear,
 )
 from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
-from sglang.srt.lora.backend import BaseLoRABackend
+# from sglang.srt.lora.backend import BaseLoRABackend
+from sglang.srt.lora.backend import UnifiedTritonLoRABackend
 
 
-class BaseLayerWithLoRA(nn.Module):
+class BaseLayerWithUnifiedLoRA(nn.Module):
     def __init__(
         self,
         base_layer: nn.Module,
-        lora_rank: int,
-        scaling: float,
-        lora_backend: BaseLoRABackend,
+        scaling: torch.Tensor,
+        lora_backend: UnifiedTritonLoRABackend,
     ):
         super().__init__()
         self.base_layer: nn.Module = base_layer
-        self.lora_rank: int = lora_rank
         self.scaling: float = scaling
         self.set_lora: bool = False
-        self.lora_backend: BaseLoRABackend = lora_backend
+        self.lora_backend: UnifiedTritonLoRABackend = lora_backend
 
     def forward(self, x: torch.Tensor):
         return self.base_layer.forward(x)
@@ -40,27 +39,25 @@ class BaseLayerWithLoRA(nn.Module):
         pass
 
 
-class VocabParallelEmbeddingWithLoRA(BaseLayerWithLoRA):
+class VocabParallelEmbeddingWithUnifiedLoRA(BaseLayerWithUnifiedLoRA):
     def __init__(
         self,
         base_layer: VocabParallelEmbedding,
-        lora_rank: int,
-        scaling: float,
-        lora_backend: BaseLoRABackend,
+        scaling: torch.Tensor,
+        lora_backend: UnifiedTritonLoRABackend,
     ) -> None:
-        super().__init__(base_layer, lora_rank, scaling, lora_backend)
+        super().__init__(base_layer, scaling, lora_backend)
         self.weight = base_layer.weight
 
 
-class ColumnParallelLinearWithLoRA(BaseLayerWithLoRA):
+class ColumnParallelLinearWithUnifiedLoRA(BaseLayerWithUnifiedLoRA):
     def __init__(
         self,
         base_layer: ColumnParallelLinear,
-        lora_rank: int,
-        scaling: float,
-        lora_backend: BaseLoRABackend,
+        scaling: torch.Tensor,
+        lora_backend: UnifiedTritonLoRABackend,
     ) -> None:
-        super().__init__(base_layer, lora_rank, scaling, lora_backend)
+        super().__init__(base_layer, scaling, lora_backend)
 
     def set_lora_info(
         self,
@@ -103,15 +100,14 @@ class ColumnParallelLinearWithLoRA(BaseLayerWithLoRA):
         return output, output_bias
 
 
-class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
+class MergedColumnParallelLinearWithUnifiedLoRA(ColumnParallelLinearWithUnifiedLoRA):
     def __init__(
         self,
         base_layer: MergedColumnParallelLinear,
-        lora_rank: int,
-        scaling: float,
-        lora_backend: BaseLoRABackend,
+        scaling: torch.Tensor,
+        lora_backend: UnifiedTritonLoRABackend,
     ) -> None:
-        super().__init__(base_layer, lora_rank, scaling, lora_backend)
+        super().__init__(base_layer, scaling, lora_backend)
 
     def set_lora_info(
         self,
@@ -143,65 +139,29 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
             else base_output + lora_output * self.scaling
         )
 
-class QKVParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
+class QKVParallelLinearWithUnifiedLoRA(ColumnParallelLinearWithUnifiedLoRA):
     def __init__(
         self,
         base_layer: QKVParallelLinear,
-        lora_rank: int,
-        scaling: float,
-        lora_backend: BaseLoRABackend,
+        scaling: torch.Tensor,
+        lora_backend: UnifiedTritonLoRABackend,
     ) -> None:
-        super().__init__(base_layer, lora_rank, scaling, lora_backend)
+        super().__init__(base_layer, scaling, lora_backend)
 
     def set_lora_info(
         self,
-        A_buffer_qkv: torch.Tensor,
-        B_buffer_q: torch.Tensor,
-        B_buffer_kv: torch.Tensor,
-    ):
-        self.set_lora = True
-        self.A_buffer_qkv = A_buffer_qkv
-
-        if self.lora_backend.fuse_stacked_lora_b:
-            assert (
-                B_buffer_q.shape[-1] == B_buffer_kv.shape[-1]
-            ), "The lora rank of q and kv should be the same when enabling fusion of qkv lora_b"
-            output_dim_q, output_dim_kv = B_buffer_q.shape[-2], B_buffer_kv.shape[-2]
-
-            # B_buffer_qkv: (num_lora, output_dim_q + 2 * output_dim_kv, r)
-            self.B_buffer_qkv = torch.cat(
-                (B_buffer_q[0], B_buffer_kv[0], B_buffer_kv[1]), dim=-2
-            ).contiguous()
-
-            # Offsets of q/k/v in output dimension
-            self.output_offset = torch.tensor(
-                [
-                    0,
-                    output_dim_q,
-                    output_dim_q + output_dim_kv,
-                    output_dim_q + 2 * output_dim_kv,
-                ],
-                dtype=torch.int32,
-                device=B_buffer_q.device,
-            )
-            # For computing number of launched blocks
-            self.max_qkv_out_dim = max(output_dim_q, output_dim_kv)
-        else:
-            self.B_buffer_qkv = (
-                B_buffer_q,
-                B_buffer_kv,
-            )
+        unified_k_buffer: torch.Tensor,
+        unified_v_buffer: torch.Tensor,
+        ):
+        self.unified_k_buffer = unified_k_buffer
+        self.unified_v_buffer = unified_v_buffer
 
     def apply_lora(self, base_output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         backend_kwargs = {"base_output": base_output, "scaling": self.scaling}
-        if self.lora_backend.fuse_stacked_lora_b:
-            backend_kwargs["output_offset"] = self.output_offset
-            backend_kwargs["max_qkv_out_dim"] = self.max_qkv_out_dim
-
         lora_output = self.lora_backend.run_qkv_lora(
             x,
-            self.A_buffer_qkv,
-            self.B_buffer_qkv,
+            self.unified_k_buffer,
+            self.unified_v_buffer,
             **backend_kwargs,
         )
         return (
@@ -211,15 +171,14 @@ class QKVParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
         )
 
 
-class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
+class RowParallelLinearWithUnifiedLoRA(BaseLayerWithUnifiedLoRA):
     def __init__(
         self,
         base_layer: RowParallelLinear,
-        lora_rank: int,
-        scaling: float,
-        lora_backend: BaseLoRABackend,
+        scaling: torch.Tensor,
+        lora_backend: UnifiedTritonLoRABackend,
     ) -> None:
-        super().__init__(base_layer, lora_rank, scaling, lora_backend)
+        super().__init__(base_layer, scaling, lora_backend)
 
     def set_lora_info(self, A_buffer: torch.Tensor, B_buffer: torch.Tensor):
         self.set_lora = True
@@ -274,20 +233,19 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
             output_bias = self.base_layer.bias
         return output, output_bias
 
-
-def get_lora_layer(
-    layer: nn.Module, lora_rank: int, scaling: int, lora_backend: BaseLoRABackend
-) -> BaseLayerWithLoRA:
+def get_unified_lora_layer(
+    layer: nn.Module, scaling: torch.Tensor, lora_backend: UnifiedTritonLoRABackend
+) -> BaseLayerWithUnifiedLoRA:
     supported_layer_types = {
         # the order matters
-        VocabParallelEmbedding: VocabParallelEmbeddingWithLoRA,
-        QKVParallelLinear: QKVParallelLinearWithLoRA,
-        MergedColumnParallelLinear: MergedColumnParallelLinearWithLoRA,
-        ColumnParallelLinear: ColumnParallelLinearWithLoRA,
-        RowParallelLinear: RowParallelLinearWithLoRA,
+        VocabParallelEmbedding: VocabParallelEmbeddingWithUnifiedLoRA,
+        QKVParallelLinear: QKVParallelLinearWithUnifiedLoRA,
+        MergedColumnParallelLinear: MergedColumnParallelLinearWithUnifiedLoRA,
+        ColumnParallelLinear: ColumnParallelLinearWithUnifiedLoRA,
+        RowParallelLinear: RowParallelLinearWithUnifiedLoRA,
     }
     for src_layer_type, lora_layer_type in supported_layer_types.items():
         if isinstance(layer, src_layer_type):  # pylint: disable=unidiomatic-typecheck
-            ret = lora_layer_type(layer, lora_rank, scaling, lora_backend)
+            ret = lora_layer_type(layer, scaling, lora_backend)
             return ret
     raise Exception(f"No corresponding LoRA layer supported for {type(layer)}.")
