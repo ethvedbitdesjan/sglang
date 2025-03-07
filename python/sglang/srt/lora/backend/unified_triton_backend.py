@@ -38,12 +38,12 @@ class UnifiedTritonLoRABackend:
             q_base_output, k_base_output, v_base_output = base_output.split([output_dim_q, output_dim_kv, output_dim_kv], dim=-1)
 
             q_lora_a_output = lora_shrink_fwd(x = x,
-                                            weight = unified_k_buffer,
+                                            weight = unified_k_buffer.view(-1,output_dim_kv),
                                             batch_info = self.batch_info,
                                             qkvo = 0)
             q_lora_output = lora_expand_fwd(
                 x = q_lora_a_output,
-                weight = unified_v_buffer,
+                weight = unified_v_buffer.view(-1,output_dim_kv),
                 batch_info = self.batch_info,
                 feat_out = output_dim_q,
                 qkvo = 0,
@@ -52,12 +52,12 @@ class UnifiedTritonLoRABackend:
             )
 
             k_lora_a_output = lora_shrink_fwd(x = x,
-                                            weight = unified_k_buffer,
+                                            weight = unified_k_buffer.view(-1,output_dim_kv),
                                             batch_info = self.batch_info,
                                             qkvo = 1)
             k_lora_output = lora_expand_fwd(
                 x = k_lora_a_output,
-                weight = unified_v_buffer,
+                weight = unified_v_buffer.view(-1,output_dim_kv),
                 batch_info = self.batch_info,
                 feat_out = output_dim_kv,
                 qkvo = 1,
@@ -66,12 +66,12 @@ class UnifiedTritonLoRABackend:
             )
 
             v_lora_a_output = lora_shrink_fwd(x = x,
-                                            weight = unified_k_buffer,
+                                            weight = unified_k_buffer.view(-1,output_dim_kv),
                                             batch_info = self.batch_info,
                                             qkvo = 2)
             v_lora_output = lora_expand_fwd(
                 x = v_lora_a_output,
-                weight = unified_v_buffer,
+                weight = unified_v_buffer.view(-1,output_dim_kv),
                 batch_info = self.batch_info,
                 feat_out = output_dim_kv,
                 qkvo = 2,

@@ -482,13 +482,13 @@ class LoraUnifiedMemoryPool:
 
     def get_unified_memory_pool(self)-> Tuple[torch.Tensor,torch.Tensor]:
         if self.attention_type == AttentionType.MHA:
-            return self.unified_k_buffer.view(-1,self.attention_config.kv_head_num*self.attention_config.head_dim),self.unified_v_buffer.view(-1,self.attention_config.kv_head_num*self.attention_config.head_dim)
+            return self.unified_k_buffer,self.unified_v_buffer
         else:
             raise ValueError('get_unified_memory_pool error')
 
     def prepare_lora_batch(self, cur_uids: Set[Optional[str]], lora_adapters: Dict[str, LoRAAdapter]):
         self.cur_adapters = {}
-        for uid in cur_uids:
+        for uid in sorted(cur_uids):
             if uid is None:
                 continue
             if uid in self.active_adapters:
@@ -546,32 +546,32 @@ class LoraUnifiedMemoryPool:
                 weights = weights.view(segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
                 self.unified_k_buffer[layer_id][selected_indices].copy_(weights)
             else:
-                weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_A)
+                weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
                 if weight_name is None:
                     continue
                 if weight_name == "kv_proj":
                     segment_length = int(head_ratio * rank)
                     offset = segment_length
                     c = 2
-                    weights = weights.view(c, rank, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                    weights = weights.transpose(1, 2).contiguous().view(c, rank, self.attention_config.kv_head_num, self.attention_config.head_dim)
                     for stacked_id in range(c):
                         stacked_offset = offset + segment_length * stacked_id
                         selected_indices = info_loc[stacked_offset:stacked_offset + rank]
-                        self.unified_v_buffer[layer_id][selected_indices].copy_(weights[stacked_id].transpose(0, 1))
+                        self.unified_v_buffer[layer_id][selected_indices].copy_(weights[stacked_id])
                 elif weight_name == "q_proj":
                     segment_length = int(head_ratio * rank)
                     offset = 0
-                    weights = weights.view(segment_length, self.attention_config.kv_head_num, 
+                    weights = weights.transpose(0, 1).contiguous().view(segment_length, self.attention_config.kv_head_num, 
                                             self.attention_config.head_dim)
                     selected_indices = info_loc[offset : offset + segment_length]
-                    self.unified_v_buffer[layer_id][selected_indices].copy_(weights.transpose(0, 1))
+                    self.unified_v_buffer[layer_id][selected_indices].copy_(weights)
                 elif weight_name == "o_proj":
                     segment_length = int(head_ratio * rank)
                     offset = rank * 3 * head_ratio
-                    weights = weights.view(segment_length, self.attention_config.kv_head_num, 
+                    weights = weights.transpose(0, 1).contiguous().view(segment_length, self.attention_config.kv_head_num, 
                                             self.attention_config.head_dim)
                     selected_indices = info_loc[offset : offset + segment_length]
-                    self.unified_v_buffer[layer_id][selected_indices].copy_(weights.transpose(0, 1))
+                    self.unified_v_buffer[layer_id][selected_indices].copy_(weights)
                 else:
                     raise ValueError(f"Unknown error")
 
