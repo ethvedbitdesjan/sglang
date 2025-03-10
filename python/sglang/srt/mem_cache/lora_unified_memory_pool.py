@@ -563,13 +563,19 @@ class LoraUnifiedMemoryPool:
                 elif weight_name == "o_proj":
                     segment_length = int(rank * head_ratio)
                     offset = rank * 3 * head_ratio
+                elif weight_name == "gate_up_proj":
+                    continue
+                elif weight_name == "down_proj":
+                    continue
                 else:
                     raise ValueError(f"Unknown error")
                 
                 selected_indices = info_loc[offset : offset + segment_length]
                 
-                weights = weights.view(segment_length, self.attention_config.kv_head_num, self.attention_config.head_dim)
-                self.unified_k_buffer[layer_id][selected_indices].copy_(weights)
+                weights = weights.view(segment_length,
+                                       self.attention_config.kv_head_num, 
+                                       self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
+                self.unified_k_buffer[layer_id][selected_indices] = weights
             else:
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
                 if weight_name is None:
@@ -578,25 +584,36 @@ class LoraUnifiedMemoryPool:
                     segment_length = int(head_ratio * rank)
                     offset = segment_length
                     c = 2
-                    weights = weights.view(c, rank, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                    weights = weights.view(c, 
+                                           rank, 
+                                           self.attention_config.kv_head_num, 
+                                           self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
                     for stacked_id in range(c):
                         stacked_offset = offset + segment_length * stacked_id
                         selected_indices = info_loc[stacked_offset:stacked_offset + rank]
-                        self.unified_v_buffer[layer_id][selected_indices].copy_(weights[stacked_id])
+                        self.unified_v_buffer[layer_id][selected_indices] = weights[stacked_id]
+                        dummy_indices = info_loc[stacked_offset + rank:stacked_offset + segment_length]
+                        self.unified_v_buffer[layer_id][dummy_indices] = 0
                 elif weight_name == "q_proj":
                     segment_length = int(head_ratio * rank)
                     offset = 0
-                    weights = weights.view(segment_length, self.attention_config.kv_head_num, 
-                                            self.attention_config.head_dim)
+                    weights = weights.view(segment_length, 
+                                           self.attention_config.kv_head_num, 
+                                            self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
                     selected_indices = info_loc[offset : offset + segment_length]
-                    self.unified_v_buffer[layer_id][selected_indices].copy_(weights)
+                    self.unified_v_buffer[layer_id][selected_indices] = weights
                 elif weight_name == "o_proj":
                     segment_length = int(head_ratio * rank)
                     offset = rank * 3 * head_ratio
-                    weights = weights.view(segment_length, self.attention_config.kv_head_num, 
-                                            self.attention_config.head_dim)
+                    weights = weights.view(segment_length, 
+                                           self.attention_config.kv_head_num, 
+                                            self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
                     selected_indices = info_loc[offset : offset + segment_length]
-                    self.unified_v_buffer[layer_id][selected_indices].copy_(weights)
+                    self.unified_v_buffer[layer_id][selected_indices] = weights
+                elif weight_name == "gate_up_proj":
+                    continue
+                elif weight_name == "down_proj":
+                    continue
                 else:
                     raise ValueError(f"Unknown error")
 

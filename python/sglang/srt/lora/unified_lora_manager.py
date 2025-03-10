@@ -70,6 +70,7 @@ class UnifiedLoRAManager:
         self.memory_pool = lora_unified_memory_pool
 
         self.init_loras()
+        self.init_lora_memory_pool()
 
         print('init UnifiedLoRAManager')
 
@@ -111,6 +112,10 @@ class UnifiedLoRAManager:
         
         # Convert original model layers to layers with LoRA
         self.convert_to_lora_layers()
+
+    def init_lora_memory_pool(self):
+        # Initialize target lora modules in memory pool
+        self.memory_pool.init_buffers(self.lora_weight_names, self.base_model)
 
     def prepare_lora_batch(self, forward_batch: ForwardBatch):
         # load active loras into lora memory pool

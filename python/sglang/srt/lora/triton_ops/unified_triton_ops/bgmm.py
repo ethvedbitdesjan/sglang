@@ -184,7 +184,6 @@ if triton.__version__ >= "2.1.0":
         batch = batch_info.bs
         hidden_size = batch_info.hidden_size
 
-
         lora_loc = batch_info.lora_loc
         lora_start = batch_info.lora_start
         lora_ranks = batch_info.lora_ranks
