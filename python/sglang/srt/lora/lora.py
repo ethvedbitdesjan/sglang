@@ -75,6 +75,7 @@ class LoRAAdapter(nn.Module):
                 for i in range(base_hf_config.num_hidden_layers)
             ]
         )
+        self.rank = config.hf_config["r"]
 
         self.weights: Dict[str, torch.Tensor] = {}
         self.weights_gpu: Dict[str, torch.Tensor] = {}

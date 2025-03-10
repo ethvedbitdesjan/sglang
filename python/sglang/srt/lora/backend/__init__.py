@@ -1,7 +1,7 @@
 from .base_backend import BaseLoRABackend
 from .flashinfer_backend import FlashInferLoRABackend
 from .triton_backend import TritonLoRABackend
-
+from .unified_triton_backend import UnifiedTritonLoRABackend
 
 def get_backend_from_name(name: str) -> BaseLoRABackend:
     """
@@ -10,6 +10,7 @@ def get_backend_from_name(name: str) -> BaseLoRABackend:
     backend_mapping = {
         "triton": TritonLoRABackend,
         "flashinfer": FlashInferLoRABackend,
+        "unified_triton": UnifiedTritonLoRABackend
     }
 
     if name in backend_mapping:

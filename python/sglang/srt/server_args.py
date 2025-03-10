@@ -143,6 +143,7 @@ class ServerArgs:
     ds_sparse_decode_threshold: int = 4096
 
     # Optimization/debug options
+    enable_unified_lora: bool = False
     disable_radix_cache: bool = False
     disable_cuda_graph: bool = False
     disable_cuda_graph_padding: bool = False
@@ -830,6 +831,11 @@ class ServerArgs:
         )
 
         # Optimization/debug options
+        parser.add_argument(
+            "--enable-unified-lora",
+            action="store_true",
+            help="Enable unified paging for lora.",
+        )
         parser.add_argument(
             "--disable-radix-cache",
             action="store_true",

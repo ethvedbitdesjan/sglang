@@ -49,6 +49,7 @@ from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import Sampler
 from sglang.srt.layers.torchao_utils import apply_torchao_config_to_model
 from sglang.srt.lora.lora_manager import LoRAManager
+from sglang.srt.lora.unified_lora_manager import UnifiedLoRAManager
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.mem_cache.memory_pool import (
     DoubleSparseTokenToKVPool,
@@ -57,6 +58,7 @@ from sglang.srt.mem_cache.memory_pool import (
     ReqToTokenPool,
     TokenToKVPoolAllocator,
 )
+from sglang.srt.mem_cache.lora_unified_memory_pool import AttentionType, LoraMHAConfig, LoraUnifiedMemoryPool
 from sglang.srt.model_executor.cuda_graph_runner import CudaGraphRunner
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader import get_model
@@ -245,13 +247,13 @@ class ModelRunner:
             self.torch_tp_applied = False
 
         # Init memory pool and attention backends
-        if server_args.lora_paths is not None:
-            self.init_lora_manager()
         self.init_memory_pool(
             min_per_gpu_memory,
             server_args.max_running_requests,
             server_args.max_total_tokens,
         )
+        if server_args.lora_paths is not None:
+            self.init_lora_manager()
         if self.device == "cuda":
             self.init_cublas()
             self.init_attention_backend()
@@ -587,15 +589,26 @@ class ModelRunner:
             return None
 
     def init_lora_manager(self):
-        self.lora_manager = LoRAManager(
-            base_model=self.model,
-            lora_paths=self.server_args.lora_paths,
-            base_hf_config=self.model_config.hf_config,
-            max_loras_per_batch=self.server_args.max_loras_per_batch,
-            load_config=self.load_config,
-            dtype=self.dtype,
-            lora_backend=self.server_args.lora_backend,
-        )
+        if self.server_args.enable_unified_lora:
+            self.lora_manager = UnifiedLoRAManager(
+                base_model=self.model,
+                lora_paths=self.server_args.lora_paths,
+                base_hf_config=self.model_config.hf_config,
+                max_loras_per_batch=self.server_args.max_loras_per_batch,
+                load_config=self.load_config,
+                dtype=self.dtype,
+                lora_unified_memory_pool=self.token_to_kv_pool_allocator
+            )
+        else:
+            self.lora_manager = LoRAManager(
+                base_model=self.model,
+                lora_paths=self.server_args.lora_paths,
+                base_hf_config=self.model_config.hf_config,
+                max_loras_per_batch=self.server_args.max_loras_per_batch,
+                load_config=self.load_config,
+                dtype=self.dtype,
+                lora_backend=self.server_args.lora_backend,
+            )
         logger.info("LoRA manager ready.")
 
     def profile_max_num_token(self, total_gpu_memory: int):
@@ -710,50 +723,64 @@ class ModelRunner:
             # Draft worker shares req_to_token_pool with the target worker.
             assert self.is_draft_worker
 
-        if (
-            self.model_config.attention_arch == AttentionArch.MLA
-            and not self.server_args.disable_mla
-        ):
-            self.token_to_kv_pool = MLATokenToKVPool(
-                self.max_total_num_tokens,
+        if self.server_args.enable_unified_lora:
+            self.token_to_kv_pool_allocator = LoraUnifiedMemoryPool(
+                size=self.max_total_num_tokens,
                 dtype=self.kv_cache_dtype,
-                kv_lora_rank=self.model_config.kv_lora_rank,
-                qk_rope_head_dim=self.model_config.qk_rope_head_dim,
-                layer_num=self.model_config.num_hidden_layers,
                 device=self.device,
+                layer_num=self.model_config.num_hidden_layers,
+                attention_type=AttentionType.MHA,
+                attention_config=LoraMHAConfig(attn_head_num=self.model_config.num_attention_heads, 
+                                                kv_head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
+                                                head_dim=self.model_config.head_dim),
                 enable_memory_saver=self.server_args.enable_memory_saver,
             )
-        elif self.server_args.enable_double_sparsity:
-            self.token_to_kv_pool = DoubleSparseTokenToKVPool(
-                self.max_total_num_tokens,
-                dtype=self.kv_cache_dtype,
-                head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
-                head_dim=self.model_config.head_dim,
-                layer_num=self.model_config.num_hidden_layers,
-                device=self.device,
-                heavy_channel_num=self.server_args.ds_heavy_channel_num,
-                enable_memory_saver=self.server_args.enable_memory_saver,
-            )
+            self.token_to_kv_pool = self.token_to_kv_pool_allocator.get_kvcache()
         else:
-            self.token_to_kv_pool = MHATokenToKVPool(
-                self.max_total_num_tokens,
-                dtype=self.kv_cache_dtype,
-                head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
-                head_dim=self.model_config.head_dim,
-                layer_num=self.model_config.num_hidden_layers,
-                device=self.device,
-                enable_memory_saver=self.server_args.enable_memory_saver,
-            )
+            if (
+                self.model_config.attention_arch == AttentionArch.MLA
+                and not self.server_args.disable_mla
+            ):
+                self.token_to_kv_pool = MLATokenToKVPool(
+                    self.max_total_num_tokens,
+                    dtype=self.kv_cache_dtype,
+                    kv_lora_rank=self.model_config.kv_lora_rank,
+                    qk_rope_head_dim=self.model_config.qk_rope_head_dim,
+                    layer_num=self.model_config.num_hidden_layers,
+                    device=self.device,
+                    enable_memory_saver=self.server_args.enable_memory_saver,
+                )
+            elif self.server_args.enable_double_sparsity:
+                self.token_to_kv_pool = DoubleSparseTokenToKVPool(
+                    self.max_total_num_tokens,
+                    dtype=self.kv_cache_dtype,
+                    head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
+                    head_dim=self.model_config.head_dim,
+                    layer_num=self.model_config.num_hidden_layers,
+                    device=self.device,
+                    heavy_channel_num=self.server_args.ds_heavy_channel_num,
+                    enable_memory_saver=self.server_args.enable_memory_saver,
+                )
+            else:
+                self.token_to_kv_pool = MHATokenToKVPool(
+                    self.max_total_num_tokens,
+                    dtype=self.kv_cache_dtype,
+                    head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
+                    head_dim=self.model_config.head_dim,
+                    layer_num=self.model_config.num_hidden_layers,
+                    device=self.device,
+                    enable_memory_saver=self.server_args.enable_memory_saver,
+                )
 
-        if self.token_to_kv_pool_allocator is None:
-            self.token_to_kv_pool_allocator = TokenToKVPoolAllocator(
-                self.max_total_num_tokens,
-                dtype=self.kv_cache_dtype,
-                device=self.device,
-                kvcache=self.token_to_kv_pool,
-            )
-        else:
-            assert self.is_draft_worker
+            if self.token_to_kv_pool_allocator is None:
+                self.token_to_kv_pool_allocator = TokenToKVPoolAllocator(
+                    self.max_total_num_tokens,
+                    dtype=self.kv_cache_dtype,
+                    device=self.device,
+                    kvcache=self.token_to_kv_pool,
+                )
+            else:
+                assert self.is_draft_worker
 
         logger.info(
             f"Memory pool end. "
