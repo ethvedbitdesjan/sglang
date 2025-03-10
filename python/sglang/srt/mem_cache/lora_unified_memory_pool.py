@@ -69,7 +69,7 @@ class AttentionType:
 class LoraMHATokenToKVPool(KVCache):
     def __init__(
         self,
-        total_size: int,
+        size: int,
         unified_k_buffer: List[torch.Tensor],
         unified_v_buffer: List[torch.Tensor],
         dtype: torch.dtype,
@@ -78,7 +78,7 @@ class LoraMHATokenToKVPool(KVCache):
         layer_num: int,
         device: str,
     ):
-        self.total_size = total_size
+        self.size = size
         self.dtype = dtype
         if dtype in (torch.float8_e5m2, torch.float8_e4m3fn):
             self.store_dtype = torch.uint8
@@ -99,19 +99,30 @@ class LoraMHATokenToKVPool(KVCache):
         )
 
     def get_kv_size_bytes(self):
-        k_size_bytes = sum(np.prod(k_cache.shape) * k_cache.dtype.itemsize for k_cache in self.unified_k_buffer)
-        v_size_bytes = sum(np.prod(v_cache.shape) * v_cache.dtype.itemsize for v_cache in self.unified_v_buffer)
+        assert hasattr(self, "unified_k_buffer")
+        assert hasattr(self, "unified_v_buffer")
+        k_size_bytes = 0
+        for k_cache in self.unified_k_buffer:
+            k_size_bytes += np.prod(k_cache.shape) * k_cache.dtype.itemsize
+        v_size_bytes = 0
+        for v_cache in self.unified_v_buffer:
+            v_size_bytes += np.prod(v_cache.shape) * v_cache.dtype.itemsize
         return k_size_bytes, v_size_bytes
 
+    # Todo: different memory layout
     def get_flat_data(self, indices):
-        flatten = torch.stack([
-            torch.stack([self.unified_k_buffer[i][indices] for i in range(self.layer_num)]),
-            torch.stack([self.unified_v_buffer[i][indices] for i in range(self.layer_num)]),
-        ])
+        # prepare a large chunk of contiguous data for efficient transfer
+        flatten = torch.stack(
+            [
+                torch.stack([self.unified_k_buffer[i][indices] for i in range(self.layer_num)]),
+                torch.stack([self.unified_v_buffer[i][indices] for i in range(self.layer_num)]),
+            ]
+        )
         return flatten
 
     @debug_timing
     def transfer(self, indices, flat_data):
+        # transfer prepared data from host to device
         flat_data = flat_data.to(device=self.device, non_blocking=False)
         k_data, v_data = flat_data[0], flat_data[1]
         for i in range(self.layer_num):
@@ -149,11 +160,11 @@ class LoraMHATokenToKVPool(KVCache):
             cache_k = cache_k.to(self.dtype)
             cache_v = cache_v.to(self.dtype)
         if self.store_dtype != self.dtype:
-            self.unified_k_buffer[layer_id][loc].copy_(cache_k.view(self.store_dtype))
-            self.unified_v_buffer[layer_id][loc].copy_(cache_v.view(self.store_dtype))
+            self.unified_k_buffer[layer_id][loc] = cache_k.view(self.store_dtype)
+            self.unified_v_buffer[layer_id][loc] = cache_v.view(self.store_dtype)
         else:
-            self.unified_k_buffer[layer_id][loc].copy_(cache_k)
-            self.unified_v_buffer[layer_id][loc].copy_(cache_v)
+            self.unified_k_buffer[layer_id][loc] = cache_k
+            self.unified_v_buffer[layer_id][loc] = cache_v
 
 class LoraMLATokenToKVPool(KVCache):
     def __init__(
@@ -236,7 +247,7 @@ class LoraUnifiedMemoryPool:
     """
     def __init__(
         self,
-        total_size: int,
+        size: int,
         dtype: torch.dtype,
         device: str,
         layer_num: int,
@@ -245,7 +256,7 @@ class LoraUnifiedMemoryPool:
         enable_memory_saver: bool,
     ):
         self.memory_saver_adapter = TorchMemorySaverAdapter.create(enable=enable_memory_saver)
-        self.total_size = total_size
+        self.size = size
         self.dtype = dtype
         if dtype in (torch.float8_e5m2, torch.float8_e4m3fn):
             self.store_dtype = torch.uint8
@@ -263,17 +274,17 @@ class LoraUnifiedMemoryPool:
         with self.memory_saver_adapter.region():
             if self.attention_type == AttentionType.MHA:
                 self.unified_k_buffer = [
-                    torch.empty((total_size + 1, attention_config.kv_head_num, attention_config.head_dim),
+                    torch.empty((size + 1, attention_config.kv_head_num, attention_config.head_dim),
                                 dtype=self.store_dtype, device=device)
                     for _ in range(layer_num)
                 ]
                 self.unified_v_buffer = [
-                    torch.empty((total_size + 1, attention_config.kv_head_num, attention_config.head_dim),
+                    torch.empty((size + 1, attention_config.kv_head_num, attention_config.head_dim),
                                 dtype=self.store_dtype, device=device)
                     for _ in range(layer_num)
                 ]
                 self.token_to_kv_pool = LoraMHATokenToKVPool(
-                    total_size=total_size,
+                    size=size,
                     unified_k_buffer=self.unified_k_buffer,
                     unified_v_buffer=self.unified_v_buffer,
                     dtype=dtype,
@@ -284,12 +295,12 @@ class LoraUnifiedMemoryPool:
                 )
             elif self.attention_type == AttentionType.MLA:
                 self.unified_kv_buffer = [
-                    torch.empty((total_size + 1, 1, attention_config.kv_lora_rank + attention_config.qk_rope_head_dim),
+                    torch.empty((size + 1, 1, attention_config.kv_lora_rank + attention_config.qk_rope_head_dim),
                                 dtype=self.store_dtype, device=device)
                     for _ in range(layer_num)
                 ]
                 self.token_to_kv_pool = LoraMLATokenToKVPool(
-                    total_size=total_size,
+                    total_size=size,
                     unified_kv_buffer=self.unified_kv_buffer,
                     dtype=dtype,
                     kv_lora_rank=attention_config.kv_lora_rank,
@@ -314,7 +325,6 @@ class LoraUnifiedMemoryPool:
         self.uid_to_buffer_id: Dict[Optional[str], int] = {}
         # Buffer idx -> lora uid in memory pool
         self.buffer_id_to_uid: List[Optional[str]] = []
-
         self.adapter_buffer: Dict[LoRAType,Dict[str, List[torch.Tensor]]] = {}
 
         self.free_slots = None
@@ -322,9 +332,14 @@ class LoraUnifiedMemoryPool:
         self.free_group = []
         self.clear()
 
+        print('init LoraUnifiedMemoryPool')
+
     # --- Core Memory Allocation Methods ---
     def available_size(self):
         return len(self.free_slots)
+    
+    def get_kvcache(self):
+        return self.token_to_kv_pool
 
     def alloc(self, need_size: int):
         if need_size > len(self.free_slots):
@@ -401,7 +416,7 @@ class LoraUnifiedMemoryPool:
             self.free(torch.concat(self.free_group))
 
     def clear(self):
-        self.free_slots = torch.arange(1, self.total_size + 1, dtype=torch.int32)
+        self.free_slots = torch.arange(1, self.size + 1, dtype=torch.int32)
         self.is_in_free_group = False
         self.free_group = []
         self.active_adapters = {}
@@ -480,17 +495,26 @@ class LoraUnifiedMemoryPool:
                     for _ in range(self.layer_num)
                 ]
 
-    def get_unified_memory_pool(self)-> Tuple[torch.Tensor,torch.Tensor]:
+    def get_unified_memory_pool(self,layer_id: int)-> Tuple[torch.Tensor,torch.Tensor]:
         if self.attention_type == AttentionType.MHA:
-            return self.unified_k_buffer,self.unified_v_buffer
+            return self.unified_k_buffer[layer_id],self.unified_v_buffer[layer_id]
         else:
             raise ValueError('get_unified_memory_pool error')
 
     def prepare_lora_batch(self, cur_uids: Set[Optional[str]], lora_adapters: Dict[str, LoRAAdapter]):
         self.cur_adapters = {}
-        for uid in sorted(cur_uids):
-            if uid is None:
-                continue
+        self.uid_to_buffer_id = {}
+        self.buffer_id_to_uid = []
+
+        buffer_id = 0
+
+        cur_uids = list(sorted(cur_uids))
+        for buffer_id, uid in enumerate(cur_uids):
+            if uid == None:
+                break
+            # assert(uid is not None)
+            self.uid_to_buffer_id[uid] = buffer_id
+            self.buffer_id_to_uid.append(uid)
             if uid in self.active_adapters:
                 self.active_adapters[uid].last_used = self.access_counter
                 self.cur_adapters[uid] = self.active_adapters[uid]
@@ -498,8 +522,9 @@ class LoraUnifiedMemoryPool:
                 continue
             adapter = lora_adapters.get(uid, None)
             if adapter is None:
-                continue
-            success = self.alloc_lora_adapter(uid, adapter.r)
+                raise ValueError("adapter is None, uid:",{uid})
+            
+            success = self.alloc_lora_adapter(uid, adapter.rank)
             if not success:
                 raise ValueError(f"Cannot allocate memory for adapter {uid}")
             self.load_lora_weight_to_buffer(uid, lora_adapter=adapter)
@@ -553,7 +578,7 @@ class LoraUnifiedMemoryPool:
                     segment_length = int(head_ratio * rank)
                     offset = segment_length
                     c = 2
-                    weights = weights.transpose(1, 2).contiguous().view(c, rank, self.attention_config.kv_head_num, self.attention_config.head_dim)
+                    weights = weights.view(c, rank, self.attention_config.kv_head_num, self.attention_config.head_dim)
                     for stacked_id in range(c):
                         stacked_offset = offset + segment_length * stacked_id
                         selected_indices = info_loc[stacked_offset:stacked_offset + rank]
@@ -561,19 +586,22 @@ class LoraUnifiedMemoryPool:
                 elif weight_name == "q_proj":
                     segment_length = int(head_ratio * rank)
                     offset = 0
-                    weights = weights.transpose(0, 1).contiguous().view(segment_length, self.attention_config.kv_head_num, 
+                    weights = weights.view(segment_length, self.attention_config.kv_head_num, 
                                             self.attention_config.head_dim)
                     selected_indices = info_loc[offset : offset + segment_length]
                     self.unified_v_buffer[layer_id][selected_indices].copy_(weights)
                 elif weight_name == "o_proj":
                     segment_length = int(head_ratio * rank)
                     offset = rank * 3 * head_ratio
-                    weights = weights.transpose(0, 1).contiguous().view(segment_length, self.attention_config.kv_head_num, 
+                    weights = weights.view(segment_length, self.attention_config.kv_head_num, 
                                             self.attention_config.head_dim)
                     selected_indices = info_loc[offset : offset + segment_length]
                     self.unified_v_buffer[layer_id][selected_indices].copy_(weights)
                 else:
                     raise ValueError(f"Unknown error")
+
+    def get_buffer_id(self, lora_uid: str):
+        return self.uid_to_buffer_id[lora_uid]
 
     def get_adapter_memory_info(self, proj_type: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if not self.cur_adapters:
@@ -588,7 +616,8 @@ class LoraUnifiedMemoryPool:
         lens = []
         if proj_type == "qkvo":
             start_pos = 0
-            for _, info in self.cur_adapters.items():
+            for uid in self.buffer_id_to_uid:
+                info = self.cur_adapters[uid]
                 rank = info.rank
                 segment_length = int(head_ratio * 4 * rank)
                 offset = 0
@@ -634,7 +663,7 @@ class LoraUnifiedMemoryPool:
     #             self.buffer_id_to_uid.append(uid)
     #             buffer_id += 1
 
-    #             total_rank += adapter.r
+    #             total_rank += adapter.rank
     #             rank_offset.append(total_rank)
 
     #     for layer_id in range(self.layer_num):
@@ -667,7 +696,7 @@ class LoraUnifiedMemoryPool:
     #                     buffer_id = self.uid_to_buffer_id[uid]
     #                     adapter = lora_adapters[uid]
     #                     adapter_info = AdapterInfo(
-    #                         rank=adapter.r,
+    #                         rank=adapter.rank,
     #                         loc=loc[],
     #                         size=required_size,
     #                         last_used=self.access_counter
@@ -704,14 +733,14 @@ class LoraUnifiedMemoryPool:
 
     #             if self.attention_type == AttentionType.MHA:
     #                 head_ratio = self.attention_config.attn_head_num // self.attention_config.kv_head_num
-    #                 required_size = math.ceil(adapter.r * 4 * head_ratio)
+    #                 required_size = math.ceil(adapter.rank * 4 * head_ratio)
     #             else:
     #                 raise ValueError(f"Unsupported attention type: {self.attention_type}")
 
     #             adapter_loc = self.alloc_contiguous(required_size)
 
     #             adapter_info = AdapterInfo(
-    #                 rank=adapter.r,
+    #                 rank=adapter.rank,
     #                 loc=adapter_loc,
     #                 size=required_size,
     #                 last_used=self.access_counter
@@ -724,7 +753,7 @@ class LoraUnifiedMemoryPool:
     #                 size=required_size,
     #                 last_used=self.access_counter
     #             )
-    #             success = self.alloc_lora_adapter(uid, adapter.r)
+    #             success = self.alloc_lora_adapter(uid, adapter.rank)
     #             if not success:
     #                 raise ValueError(f"Cannot allocate memory for adapter {uid}")
     #             self.load_lora_weight_to_buffer(uid, lora_adapter=adapter)

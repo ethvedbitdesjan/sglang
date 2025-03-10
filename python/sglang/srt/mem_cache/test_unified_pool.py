@@ -24,7 +24,7 @@ class DummyLoRAAdapterLayer:
 # Dummy adapter that has several layers
 class DummyLoRAAdapter:
     def __init__(self, r: int, num_layers: int, attn_head: int,kv_head:int, head_dim: int, scaling: float = 1.0):
-        self.r = r
+        self.rank = r
         self.scaling = scaling
         self.layers = [DummyLoRAAdapterLayer(r, attn_head,kv_head, head_dim) for _ in range(num_layers)]
 
@@ -36,14 +36,14 @@ class TestUnifiedMemoryPool():
             kv_head_num=4,     # KV buffer uses 4 heads
             head_dim=16
         )
-        self.total_size = 55
+        self.size = 55
         self.layer_num = 2
         self.dtype = torch.float16
-        self.device = "cuda"
+        self.device = "cpu"
         self.attention_type = AttentionType.MHA
 
         self.pool = LoraUnifiedMemoryPool(
-            total_size=self.total_size,
+            size=self.size,
             dtype=self.dtype,
             device=self.device,
             layer_num=self.layer_num,
@@ -89,6 +89,9 @@ class TestUnifiedMemoryPool():
         # segment_length = int(math.ceil(ratio * 4 * adapter.r))
         offset = 0 #because q
         loc, start, lens = self.pool.get_adapter_memory_info("qkvo")
+
+        print("uid_to_buffer_id",self.pool.uid_to_buffer_id)
+        print("buffer_id_to_uid",self.pool.buffer_id_to_uid)
 
         print(loc)
         print(start)

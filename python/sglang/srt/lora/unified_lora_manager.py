@@ -20,10 +20,12 @@ from typing import Dict, List, Set, Tuple
 
 import torch
 
+from sglang.srt.lora.unified_layers import get_unified_lora_layer
+from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.hf_transformers_utils import AutoConfig
 from sglang.srt.lora.backend import BaseLoRABackend, get_backend_from_name
-from sglang.srt.lora.layers import get_lora_layer,get_unified_lora_layer
+from sglang.srt.lora.layers import get_lora_layer
 from sglang.srt.lora.lora import LoRAAdapter
 from sglang.srt.lora.lora_config import LoRAConfig
 from sglang.srt.mem_cache.lora_unified_memory_pool import LoraUnifiedMemoryPool
@@ -40,7 +42,6 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.utils import replace_submodule
 
 logger = logging.getLogger(__name__)
-
 
 class UnifiedLoRAManager:
     def __init__(
@@ -69,6 +70,8 @@ class UnifiedLoRAManager:
         self.memory_pool = lora_unified_memory_pool
 
         self.init_loras()
+
+        print('init UnifiedLoRAManager')
 
     def init_loras(self):
         # Config of each LoRA adapter
@@ -133,7 +136,7 @@ class UnifiedLoRAManager:
         for i, lora_path in enumerate(forward_batch.lora_paths):
             weight_indices[i] = self.memory_pool.get_buffer_id(lora_path)
 
-        lora_loc,lora_start,lora_ranks = self.memory_pool.get_adapter_memory_info()
+        lora_loc,lora_start,lora_ranks = self.memory_pool.get_adapter_memory_info("qkvo")
         batch_info = UnifiedLoRABatchInfo(
             bs=bs,
             seg_lens=seg_lens,
@@ -158,14 +161,14 @@ class UnifiedLoRAManager:
                 weight_name = get_weight_name(
                     module_name, self.lora_weight_names, LoRAType.LORA_A
                 )
-                unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
-                module.set_unified_lora_info(
-                    unified_k_buffer,
-                    unified_v_buffer
-                )
+                # unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
+                # module.set_lora_info(
+                #     unified_k_buffer,
+                #     unified_v_buffer
+                # )
             else:
                 unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
-                module.set_unified_lora_info(
+                module.set_lora_info(
                     unified_k_buffer,
                     unified_v_buffer
                 )

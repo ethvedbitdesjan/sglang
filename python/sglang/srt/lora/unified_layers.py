@@ -153,6 +153,7 @@ class QKVParallelLinearWithUnifiedLoRA(ColumnParallelLinearWithUnifiedLoRA):
         unified_k_buffer: torch.Tensor,
         unified_v_buffer: torch.Tensor,
         ):
+        self.set_lora = True
         self.unified_k_buffer = unified_k_buffer
         self.unified_v_buffer = unified_v_buffer
 
@@ -238,14 +239,11 @@ def get_unified_lora_layer(
 ) -> BaseLayerWithUnifiedLoRA:
     supported_layer_types = {
         # the order matters
-        VocabParallelEmbedding: VocabParallelEmbeddingWithUnifiedLoRA,
         QKVParallelLinear: QKVParallelLinearWithUnifiedLoRA,
-        MergedColumnParallelLinear: MergedColumnParallelLinearWithUnifiedLoRA,
-        ColumnParallelLinear: ColumnParallelLinearWithUnifiedLoRA,
-        RowParallelLinear: RowParallelLinearWithUnifiedLoRA,
     }
     for src_layer_type, lora_layer_type in supported_layer_types.items():
         if isinstance(layer, src_layer_type):  # pylint: disable=unidiomatic-typecheck
             ret = lora_layer_type(layer, scaling, lora_backend)
             return ret
+    return layer
     raise Exception(f"No corresponding LoRA layer supported for {type(layer)}.")
