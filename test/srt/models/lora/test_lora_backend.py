@@ -64,6 +64,7 @@ UNIFIED_LORA_MODELS = [
 
 PROMPTS = [
     "AI is a field of computer science focused on",
+    
     """
     ### Instruction:
     Tell me about llamas and alpacas
@@ -73,6 +74,24 @@ PROMPTS = [
     What do you know about llamas?
     ### Answer:
     """,
+    
+    "The world is a place of",
+    
+    """
+    ### Instruction:
+    List all Canadian provinces and territories in alphabetical order.
+    ### Response:
+    Alberta, British Columbia, Manitoba, New Brunswick, Newfoundland and Labrador, Northwest Territories, Nova Scotia, Nunavut, Ontario, Prince Edward Island, Quebec, Saskatchewan, Yukon
+    ### Question 2:
+    What are the provinces and territories of Canada?
+    ### Answer:
+    """,
+    
+    """
+    ### Instruction:
+    List all Canadian provinces and territories in alphabetical order.
+    ### Response:
+    """
 ]
 
 
