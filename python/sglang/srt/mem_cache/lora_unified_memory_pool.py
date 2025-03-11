@@ -30,9 +30,9 @@ def get_projection_index(weight_name: str) -> Optional[int]:
         "o_proj": 3,
         "qkv_proj": 0,
         "kv_proj": 1,
-        "gate_up_proj": 4,
-        "down_proj": 5,
+        "gate_up_proj": 4
     }
+    #calculate offset for down proj not implemented as it depends on intermediate size    
     return mapping.get(weight_name, None)
 
 @dataclass
@@ -254,6 +254,7 @@ class LoraUnifiedMemoryPool:
         attention_type: str,
         attention_config: Union[LoraMHAConfig, LoraMLAConfig],
         enable_memory_saver: bool,
+        base_hf_config: AutoConfig
     ):
         self.memory_saver_adapter = TorchMemorySaverAdapter.create(enable=enable_memory_saver)
         self.size = size
@@ -266,7 +267,7 @@ class LoraUnifiedMemoryPool:
         self.layer_num = layer_num
         self.attention_type = attention_type
         self.attention_config = attention_config
-
+        self.base_hf_config = base_hf_config
 
         # memory allocated for lora adapters is contiguous or non-contiguous
         self.is_lora_contiguous = True
@@ -456,10 +457,16 @@ class LoraUnifiedMemoryPool:
     def alloc_lora_adapter(self, uid: str, rank: int) -> bool:
         if self.attention_type == AttentionType.MHA:
             head_ratio = self.attention_config.attn_head_num // self.attention_config.kv_head_num
-            required_size = int(rank * 4 * head_ratio)
+            qkvo_size = int(rank * 4 * head_ratio)
+            if self.base_hf_config is not None and hasattr(self.base_hf_config, "intermediate_size"):
+                gate_up_size = math.ceil(rank * 2* head_ratio * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
+                down_size = math.ceil(rank * head_ratio * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
+                required_size = qkvo_size + gate_up_size + down_size
+            else:
+                required_size = qkvo_size
         else:
             raise ValueError(f"Unsupported attention type: {self.attention_type}")
-
+        print(f"Allocating memory for adapter {uid} with rank {rank} and size {required_size}")
         adapter_loc = self.alloc(required_size)
         if adapter_loc is None:
             raise ValueError(f"Cannot allocate memory for adapter {uid}")
@@ -550,72 +557,81 @@ class LoraUnifiedMemoryPool:
     def _load_weights_mha(self, layer_id: int, info_loc: torch.Tensor, rank: int, layer_weights: Dict[str, torch.Tensor]):
         # Process lora_A weights
         head_ratio = self.attention_config.attn_head_num // self.attention_config.kv_head_num
-
+        if self.base_hf_config is not None and hasattr(self.base_hf_config, "intermediate_size"):
+            mlp_segment_length = math.ceil(rank * head_ratio * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
+        else:
+            mlp_segment_length = 0
+        print(f"intermediate_size: {self.base_hf_config.intermediate_size}, hidden_size: {self.base_hf_config.hidden_size}")
+        print(f"mlp_segment_length: {mlp_segment_length}, rank: {rank}, head_ratio: {head_ratio}")
         for name, weights in layer_weights.items():
+            segment_length = int(rank * head_ratio)
+            print(f"layer_id: {layer_id}, rank: {rank}, segment_length: {segment_length}, mlp_segment_length: {mlp_segment_length}")
             if "lora_A" in name:
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_A)
                 if weight_name is None:
                     continue
-
-                if weight_name == "qkv_proj":
-                    segment_length = int(rank * 3 * head_ratio)
-                    offset = 0
-                elif weight_name == "o_proj":
-                    segment_length = int(rank * head_ratio)
-                    offset = rank * 3 * head_ratio
-                elif weight_name == "gate_up_proj":
-                    continue
-                elif weight_name == "down_proj":
-                    continue
+                
+                c = get_stacked_multiply(weight_name)
+                
+                
+                proj_index = get_projection_index(weight_name)
+                if proj_index is None:
+                    if 'down_proj' not in weight_name:
+                        continue
+                    offset = segment_length * 4 + mlp_segment_length * 2
+                    segment_length = mlp_segment_length
                 else:
-                    raise ValueError(f"Unknown error")
+                    offset = proj_index * segment_length
+                
+                if 'up_proj' in weight_name:
+                    segment_length = 2 * segment_length
+                else:
+                    segment_length = c * segment_length
                 
                 selected_indices = info_loc[offset : offset + segment_length]
-                
-                weights = weights.view(segment_length,
+                weights = weights.view(-1,
                                        self.attention_config.kv_head_num, 
                                        self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
+                
+                assert weights.shape[0] == segment_length, f"weights.shape[0] != segment_length: {weights.shape[0]} != {segment_length}, name: {name}, {weights.shape}"
                 self.unified_k_buffer[layer_id][selected_indices] = weights
             else:
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_B)
                 if weight_name is None:
                     continue
-                if weight_name == "kv_proj":
-                    segment_length = int(head_ratio * rank)
-                    offset = segment_length
-                    c = 2
-                    weights = weights.view(c, 
-                                           rank, 
-                                           self.attention_config.kv_head_num, 
-                                           self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
+                c = get_stacked_multiply(weight_name)
+                proj_index = get_projection_index(weight_name)
+                if proj_index is None:
+                    if 'down_proj' not in weight_name:
+                        continue
+                    offset = segment_length * 4 + mlp_segment_length * 2
+                    segment_length = segment_length
+                else:
+                    offset = proj_index * segment_length
+                if 'up_proj' in weight_name:
+                    segment_length = mlp_segment_length # will be stacked so no need to multiply by 2
+                
+                if c > 1:
+                    weights = weights.view(c, -1, self.attention_config.kv_head_num, 
+                                            self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
+                    if weights.shape[1] == rank and ('k_proj' in weight_name or 'v_proj' in weight_name or 'kv_proj' in weight_name):
+                        #k,v have reduced shapes
+                        #zero add to the dim=1 of weights to make it equal segment_length
+                        weights = torch.cat([weights, torch.zeros(c, segment_length - rank, self.attention_config.kv_head_num, 
+                                                                  self.attention_config.head_dim, device=self.device,dtype=self.store_dtype)],
+                                            dim=1)
+                    assert weights.shape[1] == segment_length, f"weights.shape[1] != segment_length: {weights.shape[1]} != {segment_length}, name: {name}, {weights.shape}"
                     for stacked_id in range(c):
                         stacked_offset = offset + segment_length * stacked_id
-                        selected_indices = info_loc[stacked_offset:stacked_offset + rank]
+                        selected_indices = info_loc[stacked_offset:stacked_offset + segment_length]
                         self.unified_v_buffer[layer_id][selected_indices] = weights[stacked_id]
-                        dummy_indices = info_loc[stacked_offset + rank:stacked_offset + segment_length]
-                        self.unified_v_buffer[layer_id][dummy_indices] = 0
-                elif weight_name == "q_proj":
-                    segment_length = int(head_ratio * rank)
-                    offset = 0
-                    weights = weights.view(segment_length, 
-                                           self.attention_config.kv_head_num, 
-                                            self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
-                    selected_indices = info_loc[offset : offset + segment_length]
-                    self.unified_v_buffer[layer_id][selected_indices] = weights
-                elif weight_name == "o_proj":
-                    segment_length = int(head_ratio * rank)
-                    offset = rank * 3 * head_ratio
-                    weights = weights.view(segment_length, 
-                                           self.attention_config.kv_head_num, 
-                                            self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
-                    selected_indices = info_loc[offset : offset + segment_length]
-                    self.unified_v_buffer[layer_id][selected_indices] = weights
-                elif weight_name == "gate_up_proj":
-                    continue
-                elif weight_name == "down_proj":
-                    continue
                 else:
-                    raise ValueError(f"Unknown error")
+                    weights = weights.view(-1, 
+                                           self.attention_config.kv_head_num, 
+                                           self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
+                    assert weights.shape[0] == segment_length, f"weights.shape[0] != segment_length: {weights.shape[0]} != {segment_length}, name: {name}, {weights.shape}"
+                    selected_indices = info_loc[offset : offset + segment_length]
+                    self.unified_v_buffer[layer_id][selected_indices] = weights
 
     def get_buffer_id(self, lora_uid: str):
         return self.uid_to_buffer_id[lora_uid]
@@ -647,10 +663,31 @@ class LoraUnifiedMemoryPool:
                 else:
                     raise ValueError("end_offset > len(info.loc)")
                 start_pos += segment_length
-        elif proj_type == "gate_up":
-            pass
-        elif proj_type == "down":
-            pass
+        elif proj_type == "gate_up" or proj_type == "down":
+            start_pos = 0
+            for uid in self.buffer_id_to_uid:
+                info = self.cur_adapters[uid]
+                rank = info.rank
+                start_pos += int(head_ratio * 4 * rank)
+                segment_length = int(head_ratio * rank * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
+                offset = start_pos
+                if proj_type == "gate_up":
+                    segment_length *= 2
+                else:
+                    offset += segment_length * 2
+                    start_pos = offset
+                    
+                end_offset = offset + segment_length
+                if end_offset <= len(info.loc):
+                    gate_loc = info.loc[offset:end_offset]
+                    locs.append(gate_loc)
+                    starts.append(torch.tensor([start_pos], dtype=torch.long, device=self.device))
+                    lens.append(torch.tensor([segment_length], dtype=torch.long, device=self.device))
+                else:
+                    raise ValueError("end_offset > len(info.loc)")
+                start_pos += segment_length
+                if proj_type == "gate_up":
+                    start_pos += segment_length//2
         else:
             raise ValueError(f"Unsupported adapter cache type: {proj_type}")
 
