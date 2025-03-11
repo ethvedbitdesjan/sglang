@@ -664,14 +664,12 @@ class LoraUnifiedMemoryPool:
             for uid in self.buffer_id_to_uid:
                 info = self.cur_adapters[uid]
                 rank = info.rank
-                start_pos += int(head_ratio * 4 * rank)
                 segment_length = int(head_ratio * rank * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
-                offset = start_pos
+                offset = int(head_ratio * 4 * rank)
                 if proj_type == "gate_up":
                     segment_length *= 2
                 else:
                     offset += segment_length * 2
-                    start_pos = offset
                     
                 end_offset = offset + segment_length
                 if end_offset <= len(info.loc):
@@ -682,8 +680,6 @@ class LoraUnifiedMemoryPool:
                 else:
                     raise ValueError("end_offset > len(info.loc)")
                 start_pos += segment_length
-                if proj_type == "gate_up":
-                    start_pos += segment_length//2
         else:
             raise ValueError(f"Unsupported adapter cache type: {proj_type}")
 
