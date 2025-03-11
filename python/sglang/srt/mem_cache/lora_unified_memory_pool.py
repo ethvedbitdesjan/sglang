@@ -466,7 +466,6 @@ class LoraUnifiedMemoryPool:
                 required_size = qkvo_size
         else:
             raise ValueError(f"Unsupported attention type: {self.attention_type}")
-        print(f"Allocating memory for adapter {uid} with rank {rank} and size {required_size}")
         adapter_loc = self.alloc(required_size)
         if adapter_loc is None:
             raise ValueError(f"Cannot allocate memory for adapter {uid}")
@@ -561,11 +560,8 @@ class LoraUnifiedMemoryPool:
             mlp_segment_length = math.ceil(rank * head_ratio * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
         else:
             mlp_segment_length = 0
-        print(f"intermediate_size: {self.base_hf_config.intermediate_size}, hidden_size: {self.base_hf_config.hidden_size}")
-        print(f"mlp_segment_length: {mlp_segment_length}, rank: {rank}, head_ratio: {head_ratio}")
         for name, weights in layer_weights.items():
             segment_length = int(rank * head_ratio)
-            print(f"layer_id: {layer_id}, rank: {rank}, segment_length: {segment_length}, mlp_segment_length: {mlp_segment_length}")
             if "lora_A" in name:
                 weight_name = get_weight_name(name, self.lora_weight_names, LoRAType.LORA_A)
                 if weight_name is None:
