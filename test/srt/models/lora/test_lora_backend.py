@@ -50,7 +50,10 @@ ALL_OTHER_LORA_MODELS = [
         base="meta-llama/Llama-2-7b-hf",
         adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
         max_loras_per_batch=1,
-    ),
+    )
+]
+
+UNIFIED_LORA_MODELS = [
     LoRAModelCase(
         base="meta-llama/Llama-2-7b-hf",
         adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
@@ -244,6 +247,19 @@ class TestLoRABackend(unittest.TestCase):
         # Retain ONLY_RUN check here
         filtered_models = []
         for model_case in ALL_OTHER_LORA_MODELS:
+            if "ONLY_RUN" in os.environ and os.environ["ONLY_RUN"] != model_case.base:
+                continue
+            filtered_models.append(model_case)
+
+        self._run_backend_on_model_cases(filtered_models)
+    
+    def test_unified_lora_models(self):
+        if is_in_ci():
+            return
+
+        # Retain ONLY_RUN check here
+        filtered_models = []
+        for model_case in UNIFIED_LORA_MODELS:
             if "ONLY_RUN" in os.environ and os.environ["ONLY_RUN"] != model_case.base:
                 continue
             filtered_models.append(model_case)
