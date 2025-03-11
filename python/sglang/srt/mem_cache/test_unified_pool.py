@@ -43,9 +43,9 @@ class DummyLoRAAdapter:
 class TestUnifiedMemoryPool(unittest.TestCase):
     def setUp(self):
         self.attn_config = LoraMHAConfig(
-            attn_head_num=8,   # full number of attention heads
-            kv_head_num=4,     # KV buffer uses 4 heads
-            head_dim=8
+            attn_head_num=32,   # full number of attention heads
+            kv_head_num=8,     # KV buffer uses 4 heads
+            head_dim=128
         )
         self.size = 500
         self.layer_num = 2
