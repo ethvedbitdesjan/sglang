@@ -734,6 +734,7 @@ class ModelRunner:
                                                 kv_head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
                                                 head_dim=self.model_config.head_dim),
                 enable_memory_saver=self.server_args.enable_memory_saver,
+                base_hf_config=self.model_config.hf_config
             )
             self.token_to_kv_pool = self.token_to_kv_pool_allocator.get_kvcache()
         else:
