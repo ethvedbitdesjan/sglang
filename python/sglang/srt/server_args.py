@@ -118,6 +118,7 @@ class ServerArgs:
     lora_paths: Optional[List[str]] = None
     max_loras_per_batch: int = 8
     lora_backend: str = "triton"
+    enable_unified_lora: bool = False
 
     # Kernel backend
     attention_backend: Optional[str] = None

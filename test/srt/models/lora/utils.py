@@ -36,6 +36,7 @@ class LoRAModelCase:
     rouge_l_tolerance: float = 1.0
     max_loras_per_batch: int = 1
     skip_long_prompt: bool = False
+    enable_unified_lora: bool = False
 
     def __post_init__(self):
         if len(self.adaptors) > self.max_loras_per_batch:

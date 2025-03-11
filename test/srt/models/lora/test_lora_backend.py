@@ -51,6 +51,12 @@ ALL_OTHER_LORA_MODELS = [
         adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
         max_loras_per_batch=1,
     ),
+    LoRAModelCase(
+        base="meta-llama/Llama-2-7b-hf",
+        adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
+        max_loras_per_batch=4,
+        enable_unified_lora=True,
+    )
 ]
 
 PROMPTS = [
@@ -96,6 +102,7 @@ class TestLoRABackend(unittest.TestCase):
             disable_cuda_graph=True,
             disable_radix_cache=True,
             mem_fraction_static=0.88,
+            enable_unified_lora=model_case.enable_unified_lora
         ) as srt_runner:
             srt_outputs = srt_runner.forward(
                 [prompt], max_new_tokens=max_new_tokens, lora_paths=[adaptor.name]
