@@ -350,6 +350,7 @@ class SRTRunner:
         speculative_eagle_topk: Optional[int] = None,
         speculative_num_draft_tokens: Optional[int] = None,
         disable_overlap_schedule: bool = False,
+        enable_unified_lora: bool = False
     ):
         self.model_type = model_type
         self.is_generation = model_type == "generation"
@@ -383,6 +384,7 @@ class SRTRunner:
             enable_ep_moe=enable_ep_moe,
             disable_overlap_schedule=disable_overlap_schedule,
             cuda_graph_max_bs=4,
+            enable_unified_lora=enable_unified_lora,
             **spec_kwargs,
         )
 
