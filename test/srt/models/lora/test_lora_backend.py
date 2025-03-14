@@ -59,6 +59,27 @@ UNIFIED_LORA_MODELS = [
         adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
         max_loras_per_batch=4,
         enable_unified_lora=True,
+    ),
+    LoRAModelCase(
+        base="meta-llama/Llama-3.1-8B-Instruct",
+        adaptors=[
+            LoRAAdaptor(
+                name="algoprog/fact-generation-llama-3.1-8b-instruct-lora",
+            ),
+        ],
+        max_loras_per_batch=1,
+        enable_unified_lora=True,
+    ),
+    LoRAModelCase(
+        base="meta-llama/Llama-3.1-8B-Instruct",
+        adaptors=[
+            LoRAAdaptor(
+                name="Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
+                prefill_tolerance=1e-1,
+            ),
+        ],
+        max_loras_per_batch=1,
+        enable_unified_lora=True,
     )
 ]
 
@@ -112,6 +133,10 @@ class TestLoRABackend(unittest.TestCase):
             f"\n========== Testing backend '{backend}' for base '{base_path}' --- "
             f"Prompt '{prompt[:50]}...' using adaptor '{adaptor.name}' ---"
         )
+        if backend == "unified_triton" and not model_case.enable_unified_lora:
+            print("""Skipping unified LoRA backend test for model case that does not enable unified LoRA""")
+            return
+        
         with SRTRunner(
             base_path,
             torch_dtype=torch_dtype,
