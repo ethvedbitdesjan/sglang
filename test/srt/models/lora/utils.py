@@ -47,4 +47,4 @@ class LoRAModelCase:
 
 
 TORCH_DTYPES = [torch.float16]
-BACKENDS = ["triton"]
+BACKENDS = ["triton", "unified_triton"]

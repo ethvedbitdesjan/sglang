@@ -90,7 +90,7 @@ class TestLoRA(unittest.TestCase):
             lora_paths=all_lora_paths,
             max_loras_per_batch=3,
             disable_cuda_graph=True,
-            disable_radix_cache=True,
+            disable_radix_cache=True
         ) as srt_runner:
             srt_outputs = srt_runner.forward(
                 prompts, max_new_tokens=max_new_tokens, lora_paths=batch_lora_paths

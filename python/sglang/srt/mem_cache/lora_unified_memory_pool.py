@@ -580,7 +580,7 @@ class LoraUnifiedMemoryPool:
                     offset = proj_index * segment_length
                 
                 if 'up_proj' in weight_name:
-                    segment_length = 2 * segment_length
+                    segment_length = 2 * mlp_segment_length
                 else:
                     segment_length = c * segment_length
                 
@@ -588,7 +588,12 @@ class LoraUnifiedMemoryPool:
                 weights = weights.view(-1,
                                        self.attention_config.kv_head_num, 
                                        self.attention_config.head_dim).to(device=self.device,dtype=self.store_dtype)
-                
+                if 'up_proj' in weight_name:
+                    zero_fill = segment_length - weights.shape[0]
+                    if zero_fill > 0:
+                        weights = torch.cat([weights, torch.zeros(zero_fill, self.attention_config.kv_head_num, 
+                                                                  self.attention_config.head_dim, device=self.device,dtype=self.store_dtype)],
+                                            dim=0)
                 assert weights.shape[0] == segment_length, f"weights.shape[0] != segment_length: {weights.shape[0]} != {segment_length}, name: {name}, {weights.shape}"
                 self.unified_k_buffer[layer_id][selected_indices] = weights
             else:
@@ -664,22 +669,22 @@ class LoraUnifiedMemoryPool:
             for uid in self.buffer_id_to_uid:
                 info = self.cur_adapters[uid]
                 rank = info.rank
-                segment_length = int(head_ratio * rank * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
+                mlp_segment_length = int(head_ratio * rank * (self.base_hf_config.intermediate_size / self.base_hf_config.hidden_size))
                 offset = int(head_ratio * 4 * rank)
                 if proj_type == "gate_up":
-                    segment_length *= 2
+                    mlp_segment_length *= 2
                 else:
-                    offset += segment_length * 2
+                    offset += mlp_segment_length * 2
                     
-                end_offset = offset + segment_length
+                end_offset = offset + mlp_segment_length
                 if end_offset <= len(info.loc):
                     gate_loc = info.loc[offset:end_offset]
                     locs.append(gate_loc)
                     starts.append(torch.tensor([start_pos], dtype=torch.long, device=self.device))
-                    lens.append(torch.tensor([segment_length], dtype=torch.long, device=self.device))
+                    lens.append(torch.tensor([mlp_segment_length], dtype=torch.long, device=self.device))
                 else:
                     raise ValueError("end_offset > len(info.loc)")
-                start_pos += segment_length
+                start_pos += mlp_segment_length
         else:
             raise ValueError(f"Unsupported adapter cache type: {proj_type}")
 
