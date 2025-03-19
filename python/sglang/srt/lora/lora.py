@@ -184,7 +184,7 @@ class LoRAAdapter(nn.Module):
                     )
                     weights[up_name] = torch.zeros_like(weights[weight_name])
                     # FIXME: Add gate-only support for flashinfer in future implementations
-                    assert self.lora_backend.name == "triton", (
+                    assert self.lora_backend.name == "triton" or self.lora_backend.name=="unified_triton", (
                         f"LoRA weight initialization currently only supported for 'triton' backend. "
                         f"Received backend: {self.lora_backend.name}. Please verify your backend configuration "
                         f"or consider implementing custom initialization logic for other backends."
