@@ -39,16 +39,9 @@ class LoRALayer(nn.Module):
         super().__init__()
         self.config: LoRAConfig = config
         self.base_hf_config: AutoConfig = base_hf_config
+
+        # lora weights in cpu. The weights are loaded from checkpoint.
         self.weights: Dict[str, torch.Tensor] = {}
-        self.weight_gpu: Dict[str, torch.Tensor] = {}
-
-    def load_to_gpu(self):
-        for name, weight in self.weights.items():
-            self.weight_gpu[name] = weight.to(torch.float16).to("cuda")
-
-    def offload_from_gpu(self):
-        for name, weight in self.weights.items():
-            self.weight_gpu[name] = None
 
 
 class LoRAAdapter(nn.Module):
@@ -78,19 +71,6 @@ class LoRAAdapter(nn.Module):
         self.rank = config.hf_config["r"]
 
         self.weights: Dict[str, torch.Tensor] = {}
-        self.weights_gpu: Dict[str, torch.Tensor] = {}
-
-    def load_to_gpu(self):
-        for name, weight in self.weights.items():
-            self.weights_gpu[name] = weight.to(torch.float16).to("cuda")
-        for layer in self.layers:
-            layer.load_to_gpu()
-
-    def offload_from_gpu(self):
-        for name, weight in self.weights.items():
-            self.weights_gpu[name] = None
-        for layer in self.layers:
-            layer.offload_from_gpu()
 
     # initialize the LoRA weights to cpu
     def initialize_weights(self):
@@ -184,7 +164,10 @@ class LoRAAdapter(nn.Module):
                     )
                     weights[up_name] = torch.zeros_like(weights[weight_name])
                     # FIXME: Add gate-only support for flashinfer in future implementations
-                    assert self.lora_backend.name == "triton" or self.lora_backend.name=="unified_triton", (
+                    assert (
+                        self.lora_backend.name == "triton"
+                        or self.lora_backend.name == "unified_triton"
+                    ), (
                         f"LoRA weight initialization currently only supported for 'triton' backend. "
                         f"Received backend: {self.lora_backend.name}. Please verify your backend configuration "
                         f"or consider implementing custom initialization logic for other backends."

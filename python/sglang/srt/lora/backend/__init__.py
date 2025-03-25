@@ -1,24 +1,26 @@
-from .base_backend import BaseLoRABackend
-from .flashinfer_backend import FlashInferLoRABackend
-from .triton_backend import TritonLoRABackend
-from .unified_triton_backend import UnifiedTritonLoRABackend
+from sglang.srt.lora.backend.base_backend import BaseLoRABackend
+
 
 def get_backend_from_name(name: str) -> BaseLoRABackend:
     """
     Get corresponding backend class from backend's name
     """
-    backend_mapping = {
-        "triton": TritonLoRABackend,
-        "flashinfer": FlashInferLoRABackend,
-        "unified_triton": UnifiedTritonLoRABackend
-    }
+    if name == "triton":
+        from sglang.srt.lora.backend.triton_backend import TritonLoRABackend
 
-    if name in backend_mapping:
-        return backend_mapping[name]
+        return TritonLoRABackend
+    elif name == "flashinfer":
+        from sglang.srt.lora.backend.flashinfer_backend import FlashInferLoRABackend
 
-    raise Exception(
-        f"No supported lora backend called {name}. It should be one of {list(backend_mapping.keys())}"
-    )
+        return FlashInferLoRABackend
+    elif name == "unified_triton":
+        from sglang.srt.lora.backend.unified_triton_backend import (
+            UnifiedTritonLoRABackend,
+        )
+
+        return UnifiedTritonLoRABackend
+    else:
+        raise ValueError(f"Invalid backend: {name}")
 
 
 __all__ = [
