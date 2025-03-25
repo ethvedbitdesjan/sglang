@@ -91,6 +91,7 @@ from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
 from sglang.srt.managers.utils import validate_input_length
 from sglang.srt.mem_cache.chunk_cache import ChunkCache
 from sglang.srt.mem_cache.hiradix_cache import HiRadixCache
+from sglang.srt.mem_cache.lora_radix_cache import LoraRadixCache
 from sglang.srt.mem_cache.radix_cache import RadixCache
 from sglang.srt.metrics.collector import SchedulerMetricsCollector, SchedulerStats
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
@@ -159,6 +160,7 @@ class Scheduler:
         )
         self.gpu_id = gpu_id
         self.enable_hierarchical_cache = server_args.enable_hierarchical_cache
+        self.enable_unified_lora = server_args.enable_unified_lora
 
         # Distributed rank info
         self.dp_size = server_args.dp_size
@@ -432,6 +434,12 @@ class Scheduler:
                     req_to_token_pool=self.req_to_token_pool,
                     token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
                 )
+            elif self.enable_unified_lora:
+                self.tree_cache = LoraRadixCache(
+                    req_to_token_pool=self.req_to_token_pool,
+                    token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
+                )
+                self.token_to_kv_pool_allocator.init_lora_radix_cache(self.tree_cache)
             else:
                 self.tree_cache = RadixCache(
                     req_to_token_pool=self.req_to_token_pool,

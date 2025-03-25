@@ -28,6 +28,7 @@ from sglang.srt.managers.schedule_batch import (
     global_server_args_dict,
 )
 from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache
+from sglang.srt.mem_cache.lora_radix_cache import LoraRadixCache
 from sglang.srt.mem_cache.memory_pool import TokenToKVPoolAllocator
 from sglang.srt.mem_cache.radix_cache import RadixCache, TreeNode
 
@@ -78,9 +79,14 @@ class SchedulePolicy:
         self.tree_cache = tree_cache
 
         # It is used to find the matching prefix for in-batch prefix caching.
-        self.waiting_queue_radix_tree = RadixCache(
-            req_to_token_pool=None, token_to_kv_pool_allocator=None, disable=False
-        )
+        if isinstance(tree_cache, LoraRadixCache):
+            self.waiting_queue_radix_tree = LoraRadixCache(
+                req_to_token_pool=None, token_to_kv_pool_allocator=None
+            )
+        else:
+            self.waiting_queue_radix_tree = RadixCache(
+                req_to_token_pool=None, token_to_kv_pool_allocator=None, disable=False
+            )
 
     def calc_priority(self, waiting_queue: List[Req]) -> bool:
         policy = self._determine_active_policy(waiting_queue)
@@ -147,10 +153,12 @@ class SchedulePolicy:
 
         for r in waiting_queue:
             prefix_ids = r.adjust_max_prefix_ids()
-
             # NOTE: the prefix_indices must always be aligned with last_node
+            # if r.lora_path is None, you can ignore adapter_name
             r.prefix_indices, r.last_node = self.tree_cache.match_prefix(
-                rid=r.rid, key=prefix_ids
+                rid=r.rid,
+                key=prefix_ids,
+                adapter_name=r.lora_path,
             )
 
             # NOTE(sang): This logic is for in-batch prefix caching;
@@ -162,8 +170,9 @@ class SchedulePolicy:
             # It is kind of common when the engine is long running (e.g., imagine the prefix "the").
             if len(r.prefix_indices) <= IN_BATCH_PREFIX_CACHING_CHECK_THRESHOLD:
                 in_batch_matching_prefixes, _ = (
+                    # if r.lora_path is None, you can ignore adapter_name
                     self.waiting_queue_radix_tree.match_prefix(
-                        rid=r.rid, key=prefix_ids
+                        rid=r.rid, key=prefix_ids, adapter_name=r.lora_path
                     )
                 )
                 if (
@@ -173,9 +182,16 @@ class SchedulePolicy:
                     temporary_deprioritized.add(r.rid)
                 else:
                     # Insert with a dummy key
-                    self.waiting_queue_radix_tree.insert(
-                        prefix_ids, torch.empty(len(prefix_ids), dtype=torch.bool)
-                    )
+                    if r.lora_path != None:
+                        self.waiting_queue_radix_tree.insert(
+                            r.lora_path,
+                            prefix_ids,
+                            torch.empty(len(prefix_ids), dtype=torch.bool),
+                        )
+                    else:
+                        self.waiting_queue_radix_tree.insert(
+                            prefix_ids, torch.empty(len(prefix_ids), dtype=torch.bool)
+                        )
         return temporary_deprioritized
 
     @staticmethod
@@ -452,6 +468,8 @@ class PrefillAdder:
                 # Non-chunked prefill
                 self.can_run_list.append(req)
                 self.tree_cache.inc_lock_ref(req.last_node)
+                print("self.tree_cache.inc_lock_ref(req.last_node)", req.last_node)
+                self.tree_cache.pretty_print()
                 self._prefill_one_req(
                     prefix_len,
                     input_tokens,

@@ -387,8 +387,11 @@ class Req:
         self.fill_ids = self.origin_input_ids + self.output_ids
         if tree_cache is not None:
             # tree cache is None if the prefix is not computed with tree cache.
+            # if self.lora_path is None, then you can ignore adapter_name
             self.prefix_indices, self.last_node = tree_cache.match_prefix(
-                rid=self.rid, key=self.adjust_max_prefix_ids()
+                rid=self.rid,
+                key=self.adjust_max_prefix_ids(),
+                adapter_name=self.lora_path,
             )
         self.extend_input_len = len(self.fill_ids) - len(self.prefix_indices)
 
