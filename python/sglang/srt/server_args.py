@@ -146,6 +146,7 @@ class ServerArgs:
     ds_sparse_decode_threshold: int = 4096
 
     # Optimization/debug options
+    enable_unified_lora: bool = False
     disable_radix_cache: bool = False
     disable_cuda_graph: bool = False
     disable_cuda_graph_padding: bool = False
@@ -157,6 +158,7 @@ class ServerArgs:
     enable_mixed_chunk: bool = False
     enable_dp_attention: bool = False
     enable_ep_moe: bool = False
+    enable_deepep_moe: bool = False
     enable_torch_compile: bool = False
     torch_compile_max_bs: int = 32
     cuda_graph_max_bs: Optional[int] = None
@@ -281,6 +283,12 @@ class ServerArgs:
             logger.warning(
                 f"DP attention is enabled. The chunked prefill size is adjusted to {self.chunked_prefill_size} to avoid MoE kernel issues. "
             )
+            # DeepEP MoE
+            if self.enable_deepep_moe:
+                self.ep_size = self.dp_size
+                logger.info(
+                    f"DeepEP MoE is enabled. The expert parallel size is adjusted to be the same as the data parallel size[{self.dp_size}]."
+                )
 
         # Speculative Decoding
         if self.speculative_algorithm == "NEXTN":
@@ -866,6 +874,11 @@ class ServerArgs:
 
         # Optimization/debug options
         parser.add_argument(
+            "--enable-unified-lora",
+            action="store_true",
+            help="Enable unified paging for lora.",
+        )
+        parser.add_argument(
             "--disable-radix-cache",
             action="store_true",
             help="Disable RadixAttention for prefix caching.",
@@ -1017,6 +1030,11 @@ class ServerArgs:
             required=False,
             default=ServerArgs.hicache_ratio,
             help="The ratio of the size of host KV cache memory pool to the size of device pool.",
+        )
+        parser.add_argument(
+            "--enable-deepep-moe",
+            action="store_true",
+            help="Enabling DeepEP MoE implementation for EP MoE.",
         )
 
         # Server warmups

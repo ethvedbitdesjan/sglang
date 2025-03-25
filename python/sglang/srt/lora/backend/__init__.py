@@ -13,6 +13,12 @@ def get_backend_from_name(name: str) -> BaseLoRABackend:
         from sglang.srt.lora.backend.flashinfer_backend import FlashInferLoRABackend
 
         return FlashInferLoRABackend
+    elif name == "unified_triton":
+        from sglang.srt.lora.backend.unified_triton_backend import (
+            UnifiedTritonLoRABackend,
+        )
+
+        return UnifiedTritonLoRABackend
     else:
         raise ValueError(f"Invalid backend: {name}")
 

@@ -23,25 +23,28 @@ import torch
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.hf_transformers_utils import AutoConfig
 from sglang.srt.lora.backend import BaseLoRABackend, get_backend_from_name
-from sglang.srt.lora.layers import BaseLayerWithLoRA, get_lora_layer
+from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
+from sglang.srt.lora.layers import get_lora_layer
 from sglang.srt.lora.lora import LoRAAdapter
 from sglang.srt.lora.lora_config import LoRAConfig
-from sglang.srt.lora.mem_pool import LoRAMemoryPool
+from sglang.srt.lora.unified_layers import get_unified_lora_layer
 from sglang.srt.lora.utils import (
-    LoRABatchInfo,
     LoRAType,
+    UnifiedLoRABatchInfo,
     get_customized_names_from_hf_names,
+    get_hidden_dim,
     get_layer_id,
     get_stacked_name,
     get_weight_name,
 )
+from sglang.srt.mem_cache.lora_unified_memory_pool import LoraUnifiedMemoryPool
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.utils import replace_submodule
 
 logger = logging.getLogger(__name__)
 
 
-class LoRAManager:
+class UnifiedLoRAManager:
     def __init__(
         self,
         base_model: torch.nn.Module,
@@ -50,9 +53,8 @@ class LoRAManager:
         max_loras_per_batch: int,
         load_config: LoadConfig,
         dtype: torch.dtype,
-        lora_backend: str = "triton",
-        tp_size: int = 1,
-        tp_rank: int = 0,
+        lora_unified_memory_pool: LoraUnifiedMemoryPool,
+        lora_backend: str = "unified_triton",
     ):
         self.base_model: torch.nn.Module = base_model
         self.lora_paths: Dict[str, str] = lora_paths
@@ -60,17 +62,18 @@ class LoRAManager:
         self.max_loras_per_batch: int = max_loras_per_batch
         self.load_config: LoadConfig = load_config
         self.dtype: torch.dtype = dtype
-        self.device: torch.device = next(self.base_model.parameters()).device
-        self.tp_size: int = tp_size
-        self.tp_rank: int = tp_rank
 
         # LoRA backend for running sgemm kernels
         logger.info(f"Using {lora_backend} as backend of LoRA kernels.")
         backend_type = get_backend_from_name(lora_backend)
-        self.lora_backend: BaseLoRABackend = backend_type(lora_backend)
+        self.lora_backend: UnifiedTritonLoRABackend = backend_type(lora_backend)
+
+        self.memory_pool = lora_unified_memory_pool
 
         self.init_loras()
         self.init_lora_memory_pool()
+
+        print("init UnifiedLoRAManager")
 
     def init_loras(self):
         # Config of each LoRA adapter
@@ -81,7 +84,9 @@ class LoRAManager:
         self.hf_target_names: Set[str] = set()
         for name, path in self.lora_paths.items():
             self.configs[name] = LoRAConfig(path)
-            self.hf_target_names.update(self.configs[name].target_modules)
+            self.hf_target_names = set(self.hf_target_names) | set(
+                self.configs[name].target_modules
+            )
 
         # Target lora weight names for lora_a and lora_b modules repectively.
         # e.g., {("qkv_proj", "q_proj"), ("qkv_proj", "kv_proj")}
@@ -104,22 +109,16 @@ class LoRAManager:
 
         # misc lora configs
         self.max_lora_dim: int = max([x.hf_config["r"] for x in self.configs.values()])
+        self.scaling: torch.Tensor = torch.tensor(
+            [adapter.scaling for adapter in list(self.loras.values())],
+            dtype=torch.float16,
+            device="cuda",
+        )
 
         # Convert original model layers to layers with LoRA
         self.convert_to_lora_layers()
 
     def init_lora_memory_pool(self):
-        # Initialize memory pool
-        self.memory_pool = LoRAMemoryPool(
-            self.base_hf_config,
-            self.max_loras_per_batch,
-            self.max_lora_dim,
-            self.dtype,
-            self.tp_size,
-            self.tp_rank,
-            self.lora_modules,
-        )
-
         # Initialize target lora modules in memory pool
         self.memory_pool.init_buffers(self.lora_weight_names, self.base_model)
 
@@ -138,66 +137,73 @@ class LoRAManager:
         seg_lens = (
             forward_batch.extend_seq_lens
             if forward_batch.forward_mode.is_extend()
-            else torch.ones(bs, device=self.device)
+            else torch.ones(bs, device="cuda")
         )
-        seg_indptr = torch.zeros((bs + 1,), dtype=torch.int32, device=self.device)
+        seg_indptr = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
         seg_indptr[1:] = torch.cumsum(seg_lens, dim=0)
         max_len = int(torch.max(seg_lens))
-        weight_indices = torch.empty((bs,), dtype=torch.int64, device=self.device)
-
-        lora_ranks = torch.empty(
-            (self.max_loras_per_batch,), dtype=torch.int64, device="cuda"
-        )
-        scalings = torch.empty(
-            (self.max_loras_per_batch,), dtype=torch.float, device="cuda"
-        )
+        weight_indices = torch.empty((bs,), dtype=torch.int64, device="cuda")
         for i, lora_path in enumerate(forward_batch.lora_paths):
             weight_indices[i] = self.memory_pool.get_buffer_id(lora_path)
-            lora = self.loras[lora_path]
-            lora_ranks[weight_indices[i]] = lora.config.hf_config["r"]
-            scalings[weight_indices[i]] = lora.scaling
 
-        batch_info = LoRABatchInfo(
+        lora_loc, lora_start, lora_ranks = self.memory_pool.get_adapter_memory_info(
+            "qkvo"
+        )
+        batch_info = UnifiedLoRABatchInfo(
             bs=bs,
             seg_lens=seg_lens,
             seg_indptr=seg_indptr,
             max_len=max_len,
             weight_indices=weight_indices,
+            max_lora_dim=self.max_lora_dim,
+            hidden_size=self.base_hf_config.hidden_size,
+            output_dim_q=get_hidden_dim("q_proj", self.base_hf_config, self.base_model)[
+                1
+            ],
+            output_dim_kv=get_hidden_dim(
+                "kv_proj", self.base_hf_config, self.base_model
+            )[1],
+            output_dim_o_or_down=get_hidden_dim(
+                "o_proj", self.base_hf_config, self.base_model
+            )[1],
+            output_dim_gate_up=get_hidden_dim(
+                "gate_up_proj", self.base_hf_config, self.base_model
+            )[1],
+            lora_loc=lora_loc,
+            lora_start=lora_start,
             lora_ranks=lora_ranks,
-            scalings=scalings,
         )
         self.lora_backend.set_batch_info(batch_info)
 
         # call set_lora_info for each lora modules
-        for layer_id, modules in self.lora_modules.items():
-            for module_name, module in modules:
-                if "qkv_proj" in module_name:
-                    module.set_lora_info(
-                        self.memory_pool.get_tensor(
-                            "qkv_proj", layer_id, LoRAType.LORA_A
-                        ),
-                        self.memory_pool.get_tensor(
-                            "q_proj", layer_id, LoRAType.LORA_B
-                        ),
-                        self.memory_pool.get_tensor(
-                            "kv_proj", layer_id, LoRAType.LORA_B
-                        ),
-                    )
-                else:
-                    weight_name = get_weight_name(
-                        module_name, self.lora_weight_names, LoRAType.LORA_A
-                    )
-                    module.set_lora_info(
-                        self.memory_pool.get_tensor(
-                            weight_name, layer_id, LoRAType.LORA_A
-                        ),
-                        self.memory_pool.get_tensor(
-                            weight_name, layer_id, LoRAType.LORA_B
-                        ),
-                    )
+        for module_name, module in self.lora_modules:
+            layer_id = get_layer_id(module_name)
+            # if "qkv_proj" not in module_name:
+            #     # gate_up_proj,down_proj
+            #     weight_name = get_weight_name(
+            #         module_name, self.lora_weight_names, LoRAType.LORA_A
+            #     )
+            #     unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
+            #     module.set_lora_info(
+            #         unified_k_buffer,
+            #         unified_v_buffer
+            #     )
+            # else:
+            #     unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
+            #     module.set_lora_info(
+            #         unified_k_buffer,
+            #         unified_v_buffer
+            #     )
+            if "qkv_proj" in module_name or "o_proj" in module_name:
+                unified_k_buffer, unified_v_buffer = (
+                    self.memory_pool.get_unified_memory_pool(layer_id=layer_id)
+                )
+                module.set_lora_info(unified_k_buffer, unified_v_buffer)
 
     def set_lora_module(self, module_name, module):
-        lora_module = get_lora_layer(module, self.lora_backend)
+        lora_module = get_unified_lora_layer(
+            layer=module, scaling=self.scaling, lora_backend=self.lora_backend
+        )
         replace_submodule(self.base_model, module_name, lora_module)
         return lora_module
 
@@ -209,13 +215,10 @@ class LoRAManager:
         )
 
         # Monkey patch to use the LoRA version layers
-        self.lora_modules: Dict[int, List[Tuple[str, BaseLayerWithLoRA]]] = {
-            i: [] for i in range(self.base_hf_config.num_hidden_layers)
-        }
+        self.lora_modules: List[Tuple[str, torch.nn.Module]] = []
         for module_name, module in self.base_model.named_modules():
             # The module should be converted if it is included in target_names
             if module_name.split(".")[-1] in customized_target_names:
-                layer_id = get_layer_id(module_name)
-                self.lora_modules[layer_id].append(
+                self.lora_modules.append(
                     (module_name, self.set_lora_module(module_name, module))
                 )

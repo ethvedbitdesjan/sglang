@@ -5,8 +5,9 @@ import torch
 from sglang.srt.lora.utils import LoRABatchInfo
 
 
-def get_fuse_output_scaling_add_from_name(name: str) -> bool:
+def get_fuse_output_add_from_name(name: str) -> bool:
     mapping = {
+        "unified_triton": True,
         "triton": True,
         "flashinfer": False,
     }
@@ -15,6 +16,7 @@ def get_fuse_output_scaling_add_from_name(name: str) -> bool:
 
 def get_fuse_stacked_lora_b_from_name(name: str) -> bool:
     mapping = {
+        "unified_triton": True,
         "triton": True,
         "flashinfer": False,
     }
@@ -28,14 +30,14 @@ class BaseLoRABackend:
     Args:
         name: name of backend
         batch_info: information of current batch for use
-        fuse_output_scaling_add: if set to True, the output buffer for storing result will be passed in when doing lora_b forward,
-                                 and the operation of scaling and adding will be fused into kernel
+        fuse_output_add: if set to True, the output buffer for storing result will be passed in when doing lora_b forward,
+                                 and the operation of adding will be fused into kernel
     """
 
     def __init__(self, name: str, batch_info: LoRABatchInfo = None):
         self.name = name
         self.batch_info = batch_info
-        self.fuse_output_scaling_add = get_fuse_output_scaling_add_from_name(name)
+        self.fuse_output_add = get_fuse_output_add_from_name(name)
         self.fuse_stacked_lora_b = get_fuse_stacked_lora_b_from_name(name)
 
     def run_lora_a_sgemm(

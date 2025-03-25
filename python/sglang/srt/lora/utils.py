@@ -25,6 +25,50 @@ class LoRABatchInfo:
     # The index of lora adapter used by each sequence, in shape (bs,)
     weight_indices: torch.Tensor
 
+    # ranks of each lora adapter, in shape (lora_num,)
+    lora_ranks: torch.Tensor
+
+    # scaling of each lora adapter, in shape (lora_num,)
+    scalings: torch.Tensor
+
+
+@dataclass
+class UnifiedLoRABatchInfo:
+    # Batch size
+    bs: int
+
+    # Lengths of each sequence in shape (bs,)
+    seg_lens: torch.Tensor
+
+    # Indice pointers of each sequence in shape (bs + 1, )
+    seg_indptr: torch.Tensor
+
+    # Maximum sequence length of current batch
+    max_len: int
+
+    # The index of lora adapter used by each sequence, in shape (bs,)
+    weight_indices: torch.Tensor
+
+    # Maximum lora dim of lora adapters in the current batch
+    max_lora_dim: int
+
+    # hidden_size
+    hidden_size: int
+
+    output_dim_q: int
+    output_dim_kv: int
+    output_dim_o_or_down: int
+    output_dim_gate_up: int
+
+    # mapping to memory pool # lora_loc[i] is a list of indices occupied by adapter i
+    lora_loc: torch.Tensor
+
+    # lora_start[i] is the start location of adapter i
+    lora_start: torch.Tensor
+
+    # lora_ranks[i] is the number of cells occupied by adapter i
+    lora_ranks: torch.Tensor
+
 
 class LoRAType(Enum):
     LORA_A = 0

@@ -49,12 +49,57 @@ ALL_OTHER_LORA_MODELS = [
     LoRAModelCase(
         base="meta-llama/Llama-2-7b-hf",
         adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
+        max_loras_per_batch=1,
+    )
+]
+
+UNIFIED_LORA_MODELS = [
+    LoRAModelCase(
+        base="meta-llama/Llama-2-7b-hf",
+        adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
+        enable_unified_lora=True,
         max_loras_per_batch=2,
+    ),
+    LoRAModelCase(
+        base="meta-llama/Llama-3.1-8B-Instruct",
+        adaptors=[
+            LoRAAdaptor(
+                name="algoprog/fact-generation-llama-3.1-8b-instruct-lora",
+            ),
+        ],
+        max_loras_per_batch=1,
+        enable_unified_lora=True,
+    ),
+    LoRAModelCase(
+        base="meta-llama/Llama-3.1-8B-Instruct",
+        adaptors=[
+            LoRAAdaptor(
+                name="Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
+                prefill_tolerance=1e-1,
+            ),
+        ],
+        max_loras_per_batch=1,
+        enable_unified_lora=True,
     ),
 ]
 
 PROMPTS = [
     "AI is a field of computer science focused on",
+    "The world is a place of",
+    """
+    ### Instruction:
+    List all Canadian provinces and territories in alphabetical order.
+    ### Response:
+    """,
+    """
+    ### Instruction:
+    List all Canadian provinces and territories in alphabetical order.
+    ### Response:
+    Alberta, British Columbia, Manitoba, New Brunswick, Newfoundland and Labrador, Northwest Territories, Nova Scotia, Nunavut, Ontario, Prince Edward Island, Quebec, Saskatchewan, Yukon
+    ### Question 2:
+    What are the provinces and territories of Canada?
+    ### Answer:
+    """,
     """
     ### Instruction:
     Tell me about llamas and alpacas
@@ -85,6 +130,12 @@ class TestLoRABackend(unittest.TestCase):
             f"\n========== Testing backend '{backend}' for base '{base_path}' --- "
             f"Prompt '{prompt[:50]}...' using adaptor '{adaptor.name}' ---"
         )
+        if backend == "unified_triton" and not model_case.enable_unified_lora:
+            print(
+                """Skipping unified LoRA backend test for model case that does not enable unified LoRA"""
+            )
+            return
+
         with SRTRunner(
             base_path,
             torch_dtype=torch_dtype,
@@ -96,6 +147,7 @@ class TestLoRABackend(unittest.TestCase):
             disable_cuda_graph=True,
             disable_radix_cache=True,
             mem_fraction_static=0.88,
+            enable_unified_lora=model_case.enable_unified_lora,
             disable_custom_all_reduce=False,
         ) as srt_runner:
             srt_outputs = srt_runner.forward(
@@ -239,6 +291,19 @@ class TestLoRABackend(unittest.TestCase):
         # Retain ONLY_RUN check here
         filtered_models = []
         for model_case in ALL_OTHER_LORA_MODELS:
+            if "ONLY_RUN" in os.environ and os.environ["ONLY_RUN"] != model_case.base:
+                continue
+            filtered_models.append(model_case)
+
+        self._run_backend_on_model_cases(filtered_models)
+
+    def test_unified_lora_models(self):
+        if is_in_ci():
+            return
+
+        # Retain ONLY_RUN check here
+        filtered_models = []
+        for model_case in UNIFIED_LORA_MODELS:
             if "ONLY_RUN" in os.environ and os.environ["ONLY_RUN"] != model_case.base:
                 continue
             filtered_models.append(model_case)

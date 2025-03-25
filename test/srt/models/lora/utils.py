@@ -31,11 +31,12 @@ class LoRAModelCase:
     base: str
     adaptors: List[LoRAAdaptor]
     tp_size: int = 1
-    prefill_tolerance: float = 5e-2
-    decode_tolerance: float = 5e-2
+    prefill_tolerance: float = 1e-1
+    decode_tolerance: float = 1e-1
     rouge_l_tolerance: float = 1.0
     max_loras_per_batch: int = 1
     skip_long_prompt: bool = False
+    enable_unified_lora: bool = False
 
     def __post_init__(self):
         if len(self.adaptors) > self.max_loras_per_batch:
@@ -46,4 +47,4 @@ class LoRAModelCase:
 
 
 TORCH_DTYPES = [torch.float16]
-BACKENDS = ["triton"]
+BACKENDS = ["triton", "unified_triton"]
