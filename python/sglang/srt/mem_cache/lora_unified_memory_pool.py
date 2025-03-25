@@ -143,6 +143,13 @@ class LoraMHATokenToKVPool(KVCache):
             self.unified_k_buffer[i][indices] = k_data[i]
             self.unified_v_buffer[i][indices] = v_data[i]
 
+    def transfer_per_layer(self, indices, flat_data, layer_id):
+        # transfer prepared data from host to device
+        flat_data = flat_data.to(device=self.device, non_blocking=False)
+        k_data, v_data = flat_data[0], flat_data[1]
+        self.unified_k_buffer[layer_id][indices] = k_data
+        self.unified_v_buffer[layer_id][indices] = v_data
+
     def get_key_buffer(self, layer_id: int):
         if self.store_dtype != self.dtype:
             return self.unified_k_buffer[layer_id].view(self.dtype)
@@ -288,6 +295,7 @@ class LoraUnifiedMemoryPool:
             self.store_dtype = torch.uint8
         else:
             self.store_dtype = dtype
+        self.page_size = 1
         self.device = device
         self.layer_num = layer_num
         self.attention_type = attention_type

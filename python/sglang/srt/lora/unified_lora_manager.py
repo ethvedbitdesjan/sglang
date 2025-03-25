@@ -32,6 +32,7 @@ from sglang.srt.lora.utils import (
     LoRAType,
     UnifiedLoRABatchInfo,
     get_customized_names_from_hf_names,
+    get_hidden_dim,
     get_layer_id,
     get_stacked_name,
     get_weight_name,
@@ -158,12 +159,18 @@ class UnifiedLoRAManager:
             weight_indices=weight_indices,
             max_lora_dim=self.max_lora_dim,
             hidden_size=self.base_hf_config.hidden_size,
-            output_dim_q=self.base_hf_config.hidden_size,
-            output_dim_kv=self.base_hf_config.hidden_size
-            // (
-                self.base_hf_config.num_attention_heads
-                // self.base_hf_config.num_key_value_heads
-            ),
+            output_dim_q=get_hidden_dim("q_proj", self.base_hf_config, self.base_model)[
+                1
+            ],
+            output_dim_kv=get_hidden_dim(
+                "kv_proj", self.base_hf_config, self.base_model
+            )[1],
+            output_dim_o_or_down=get_hidden_dim(
+                "o_proj", self.base_hf_config, self.base_model
+            )[1],
+            output_dim_gate_up=get_hidden_dim(
+                "gate_up_proj", self.base_hf_config, self.base_model
+            )[1],
             lora_loc=lora_loc,
             lora_start=lora_start,
             lora_ranks=lora_ranks,
@@ -173,17 +180,23 @@ class UnifiedLoRAManager:
         # call set_lora_info for each lora modules
         for module_name, module in self.lora_modules:
             layer_id = get_layer_id(module_name)
-            if "qkv_proj" not in module_name:
-                # gate_up_proj,down_proj
-                weight_name = get_weight_name(
-                    module_name, self.lora_weight_names, LoRAType.LORA_A
-                )
-                # unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
-                # module.set_lora_info(
-                #     unified_k_buffer,
-                #     unified_v_buffer
-                # )
-            else:
+            # if "qkv_proj" not in module_name:
+            #     # gate_up_proj,down_proj
+            #     weight_name = get_weight_name(
+            #         module_name, self.lora_weight_names, LoRAType.LORA_A
+            #     )
+            #     unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
+            #     module.set_lora_info(
+            #         unified_k_buffer,
+            #         unified_v_buffer
+            #     )
+            # else:
+            #     unified_k_buffer,unified_v_buffer = self.memory_pool.get_unified_memory_pool(layer_id = layer_id)
+            #     module.set_lora_info(
+            #         unified_k_buffer,
+            #         unified_v_buffer
+            #     )
+            if "qkv_proj" in module_name or "o_proj" in module_name:
                 unified_k_buffer, unified_v_buffer = (
                     self.memory_pool.get_unified_memory_pool(layer_id=layer_id)
                 )

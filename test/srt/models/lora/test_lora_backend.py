@@ -57,8 +57,8 @@ UNIFIED_LORA_MODELS = [
     LoRAModelCase(
         base="meta-llama/Llama-2-7b-hf",
         adaptors=[LoRAAdaptor(name="winddude/wizardLM-LlaMA-LoRA-7B")],
-        max_loras_per_batch=4,
         enable_unified_lora=True,
+        max_loras_per_batch=2,
     ),
     LoRAModelCase(
         base="meta-llama/Llama-3.1-8B-Instruct",
@@ -80,19 +80,17 @@ UNIFIED_LORA_MODELS = [
         ],
         max_loras_per_batch=1,
         enable_unified_lora=True,
-    )
+    ),
 ]
 
 PROMPTS = [
     "AI is a field of computer science focused on",
-    
     "The world is a place of",
     """
     ### Instruction:
     List all Canadian provinces and territories in alphabetical order.
     ### Response:
     """,
-    
     """
     ### Instruction:
     List all Canadian provinces and territories in alphabetical order.
@@ -102,7 +100,6 @@ PROMPTS = [
     What are the provinces and territories of Canada?
     ### Answer:
     """,
-    
     """
     ### Instruction:
     Tell me about llamas and alpacas
@@ -111,7 +108,7 @@ PROMPTS = [
     ### Question 2:
     What do you know about llamas?
     ### Answer:
-    """
+    """,
 ]
 
 
@@ -134,9 +131,11 @@ class TestLoRABackend(unittest.TestCase):
             f"Prompt '{prompt[:50]}...' using adaptor '{adaptor.name}' ---"
         )
         if backend == "unified_triton" and not model_case.enable_unified_lora:
-            print("""Skipping unified LoRA backend test for model case that does not enable unified LoRA""")
+            print(
+                """Skipping unified LoRA backend test for model case that does not enable unified LoRA"""
+            )
             return
-        
+
         with SRTRunner(
             base_path,
             torch_dtype=torch_dtype,
@@ -148,7 +147,8 @@ class TestLoRABackend(unittest.TestCase):
             disable_cuda_graph=True,
             disable_radix_cache=True,
             mem_fraction_static=0.88,
-            enable_unified_lora=model_case.enable_unified_lora
+            enable_unified_lora=model_case.enable_unified_lora,
+            disable_custom_all_reduce=False,
         ) as srt_runner:
             srt_outputs = srt_runner.forward(
                 [prompt], max_new_tokens=max_new_tokens, lora_paths=[adaptor.name]
@@ -167,6 +167,7 @@ class TestLoRABackend(unittest.TestCase):
             model_type="generation",
             tp_size=model_case.tp_size,
             mem_fraction_static=0.88,
+            disable_custom_all_reduce=False,
         ) as srt_runner:
             srt_no_lora_outputs = srt_runner.forward(
                 [prompt], max_new_tokens=max_new_tokens
@@ -295,7 +296,7 @@ class TestLoRABackend(unittest.TestCase):
             filtered_models.append(model_case)
 
         self._run_backend_on_model_cases(filtered_models)
-    
+
     def test_unified_lora_models(self):
         if is_in_ci():
             return
