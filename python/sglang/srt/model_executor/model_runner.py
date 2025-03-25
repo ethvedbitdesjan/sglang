@@ -196,16 +196,17 @@ class ModelRunner:
         if self.tp_size > 1 and supports_torch_tp:
             self.apply_torch_tp()
 
-        # Init lora
-        if server_args.lora_paths is not None:
-            self.init_lora_manager()
-
         # Init memory pool and attention backends
         self.init_memory_pool(
             min_per_gpu_memory,
             server_args.max_running_requests,
             server_args.max_total_tokens,
         )
+
+        # Init lora
+        if server_args.lora_paths is not None:
+            self.init_lora_manager()
+
         if self.device == "cuda":
             self.init_cublas()
             self.init_attention_backend()
@@ -786,62 +787,67 @@ class ModelRunner:
                 base_hf_config=self.model_config.hf_config,
             )
             self.token_to_kv_pool = self.token_to_kv_pool_allocator.get_kvcache()
-        elif (
-            self.model_config.attention_arch == AttentionArch.MLA
-            and not self.server_args.disable_mla
-        ):
-            self.token_to_kv_pool = MLATokenToKVPool(
-                self.max_total_num_tokens,
-                page_size=self.page_size,
-                dtype=self.kv_cache_dtype,
-                kv_lora_rank=self.model_config.kv_lora_rank,
-                qk_rope_head_dim=self.model_config.qk_rope_head_dim,
-                layer_num=self.model_config.num_hidden_layers,
-                device=self.device,
-                enable_memory_saver=self.server_args.enable_memory_saver,
-            )
-        elif self.server_args.enable_double_sparsity:
-            self.token_to_kv_pool = DoubleSparseTokenToKVPool(
-                self.max_total_num_tokens,
-                page_size=self.page_size,
-                dtype=self.kv_cache_dtype,
-                head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
-                head_dim=self.model_config.head_dim,
-                layer_num=self.model_config.num_hidden_layers,
-                device=self.device,
-                heavy_channel_num=self.server_args.ds_heavy_channel_num,
-                enable_memory_saver=self.server_args.enable_memory_saver,
-            )
         else:
-            self.token_to_kv_pool = MHATokenToKVPool(
-                self.max_total_num_tokens,
-                page_size=self.page_size,
-                dtype=self.kv_cache_dtype,
-                head_num=self.model_config.get_num_kv_heads(get_attention_tp_size()),
-                head_dim=self.model_config.head_dim,
-                layer_num=self.model_config.num_hidden_layers,
-                device=self.device,
-                enable_memory_saver=self.server_args.enable_memory_saver,
-            )
-
-        if self.token_to_kv_pool_allocator is None:
-            if self.page_size == 1:
-                self.token_to_kv_pool_allocator = TokenToKVPoolAllocator(
-                    self.max_total_num_tokens,
-                    dtype=self.kv_cache_dtype,
-                    device=self.device,
-                    kvcache=self.token_to_kv_pool,
-                )
-            else:
-                self.token_to_kv_pool_allocator = PagedTokenToKVPoolAllocator(
+            if (
+                self.model_config.attention_arch == AttentionArch.MLA
+                and not self.server_args.disable_mla
+            ):
+                self.token_to_kv_pool = MLATokenToKVPool(
                     self.max_total_num_tokens,
                     page_size=self.page_size,
                     dtype=self.kv_cache_dtype,
+                    kv_lora_rank=self.model_config.kv_lora_rank,
+                    qk_rope_head_dim=self.model_config.qk_rope_head_dim,
+                    layer_num=self.model_config.num_hidden_layers,
                     device=self.device,
-                    kvcache=self.token_to_kv_pool,
+                    enable_memory_saver=self.server_args.enable_memory_saver,
                 )
-        else:
-            assert self.is_draft_worker
+            elif self.server_args.enable_double_sparsity:
+                self.token_to_kv_pool = DoubleSparseTokenToKVPool(
+                    self.max_total_num_tokens,
+                    page_size=self.page_size,
+                    dtype=self.kv_cache_dtype,
+                    head_num=self.model_config.get_num_kv_heads(
+                        get_attention_tp_size()
+                    ),
+                    head_dim=self.model_config.head_dim,
+                    layer_num=self.model_config.num_hidden_layers,
+                    device=self.device,
+                    heavy_channel_num=self.server_args.ds_heavy_channel_num,
+                    enable_memory_saver=self.server_args.enable_memory_saver,
+                )
+            else:
+                self.token_to_kv_pool = MHATokenToKVPool(
+                    self.max_total_num_tokens,
+                    page_size=self.page_size,
+                    dtype=self.kv_cache_dtype,
+                    head_num=self.model_config.get_num_kv_heads(
+                        get_attention_tp_size()
+                    ),
+                    head_dim=self.model_config.head_dim,
+                    layer_num=self.model_config.num_hidden_layers,
+                    device=self.device,
+                    enable_memory_saver=self.server_args.enable_memory_saver,
+                )
+
+            if self.token_to_kv_pool_allocator is None:
+                if self.page_size == 1:
+                    self.token_to_kv_pool_allocator = TokenToKVPoolAllocator(
+                        self.max_total_num_tokens,
+                        dtype=self.kv_cache_dtype,
+                        device=self.device,
+                        kvcache=self.token_to_kv_pool,
+                    )
+                else:
+                    self.token_to_kv_pool_allocator = PagedTokenToKVPoolAllocator(
+                        self.max_total_num_tokens,
+                        page_size=self.page_size,
+                        dtype=self.kv_cache_dtype,
+                        device=self.device,
+                        kvcache=self.token_to_kv_pool,
+                    )
+            else:
+                assert self.is_draft_worker
 
         logger.info(
             f"Memory pool end. "

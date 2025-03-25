@@ -99,6 +99,7 @@ class TestMultiLoRABackend(unittest.TestCase):
             disable_cuda_graph=True,
             disable_radix_cache=True,
             mem_fraction_static=0.88,
+            enable_unified_lora=model_case.enable_unified_lora,
         ) as srt_runner:
             srt_outputs = srt_runner.forward(
                 prompts, max_new_tokens=max_new_tokens, lora_paths=adaptor_names

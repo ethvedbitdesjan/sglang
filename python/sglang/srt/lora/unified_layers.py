@@ -14,9 +14,6 @@ from sglang.srt.layers.linear import (
     RowParallelLinear,
 )
 from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
-
-# from sglang.srt.lora.backend import BaseLoRABackend
-from sglang.srt.lora.backend import UnifiedTritonLoRABackend
 from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
 
 
