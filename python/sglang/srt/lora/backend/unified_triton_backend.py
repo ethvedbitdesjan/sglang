@@ -4,7 +4,7 @@ import torch
 
 from sglang.srt.lora.backend import BaseLoRABackend
 from sglang.srt.lora.backend.base_backend import (
-    get_fuse_output_scaling_add_from_name,
+    get_fuse_output_add_from_name,
     get_fuse_stacked_lora_b_from_name,
 )
 from sglang.srt.lora.triton_ops.unified_triton_ops.bgmm import (
@@ -18,7 +18,7 @@ class UnifiedTritonLoRABackend:
     def __init__(self, name: str, batch_info: UnifiedLoRABatchInfo = None):
         self.name = name
         self.batch_info = batch_info
-        self.fuse_output_scaling_add = get_fuse_output_scaling_add_from_name(name)
+        self.fuse_output_scaling_add = get_fuse_output_add_from_name(name)
         self.fuse_stacked_lora_b = get_fuse_stacked_lora_b_from_name(name)
 
     def set_batch_info(self, batch_info: UnifiedLoRABatchInfo):
