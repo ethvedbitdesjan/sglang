@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 
-from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
 from sglang.srt.distributed import (
     get_tensor_model_parallel_rank,
     split_tensor_along_last_dim,
@@ -15,8 +14,10 @@ from sglang.srt.layers.linear import (
     RowParallelLinear,
 )
 from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
+
 # from sglang.srt.lora.backend import BaseLoRABackend
 from sglang.srt.lora.backend import UnifiedTritonLoRABackend
+from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
 
 
 class BaseLayerWithUnifiedLoRA(nn.Module):
@@ -139,6 +140,7 @@ class MergedColumnParallelLinearWithUnifiedLoRA(ColumnParallelLinearWithUnifiedL
             else base_output + lora_output * self.scaling
         )
 
+
 class QKVParallelLinearWithUnifiedLoRA(ColumnParallelLinearWithUnifiedLoRA):
     def __init__(
         self,
@@ -152,7 +154,7 @@ class QKVParallelLinearWithUnifiedLoRA(ColumnParallelLinearWithUnifiedLoRA):
         self,
         unified_k_buffer: torch.Tensor,
         unified_v_buffer: torch.Tensor,
-        ):
+    ):
         self.set_lora = True
         self.unified_k_buffer = unified_k_buffer
         self.unified_v_buffer = unified_v_buffer
@@ -181,17 +183,21 @@ class RowParallelLinearWithUnifiedLoRA(BaseLayerWithUnifiedLoRA):
     ) -> None:
         super().__init__(base_layer, scaling, lora_backend)
 
-    def set_lora_info(self, A_buffer: torch.Tensor, B_buffer: torch.Tensor):
+    def set_lora_info(
+        self,
+        unified_k_buffer: torch.Tensor,
+        unified_v_buffer: torch.Tensor,
+    ):
         self.set_lora = True
-        self.A_buffer = A_buffer
-        self.B_buffer = B_buffer
+        self.unified_k_buffer = unified_k_buffer
+        self.unified_v_buffer = unified_v_buffer
 
     def apply_lora(self, base_output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         backend_kwargs = {"base_output": base_output, "scaling": self.scaling}
-        lora_a_output = self.lora_backend.run_lora_a_sgemm(x, self.A_buffer)
-        lora_output = self.lora_backend.run_lora_b_sgemm(
-            lora_a_output,
-            self.B_buffer[0],
+        lora_output = self.lora_backend.run_o_or_down_lora(
+            x=x,
+            unified_k_buffer=self.unified_k_buffer,
+            unified_v_buffer=self.unified_v_buffer,
             **backend_kwargs,
         )
         return (
@@ -234,12 +240,14 @@ class RowParallelLinearWithUnifiedLoRA(BaseLayerWithUnifiedLoRA):
             output_bias = self.base_layer.bias
         return output, output_bias
 
+
 def get_unified_lora_layer(
     layer: nn.Module, scaling: torch.Tensor, lora_backend: UnifiedTritonLoRABackend
 ) -> BaseLayerWithUnifiedLoRA:
     supported_layer_types = {
         # the order matters
         QKVParallelLinear: QKVParallelLinearWithUnifiedLoRA,
+        RowParallelLinear: RowParallelLinearWithUnifiedLoRA,
     }
     for src_layer_type, lora_layer_type in supported_layer_types.items():
         if isinstance(layer, src_layer_type):  # pylint: disable=unidiomatic-typecheck

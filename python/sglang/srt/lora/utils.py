@@ -25,6 +25,7 @@ class LoRABatchInfo:
     # The index of lora adapter used by each sequence, in shape (bs,)
     weight_indices: torch.Tensor
 
+
 @dataclass
 class UnifiedLoRABatchInfo:
     # Batch size
@@ -50,13 +51,15 @@ class UnifiedLoRABatchInfo:
 
     output_dim_q: int
     output_dim_kv: int
+    output_dim_o_or_down: int
+    output_dim_gate_up: int
 
     # mapping to memory pool # lora_loc[i] is a list of indices occupied by adapter i
     lora_loc: torch.Tensor
-        
+
     # lora_start[i] is the start location of adapter i
     lora_start: torch.Tensor
-    
+
     # lora_ranks[i] is the number of cells occupied by adapter i
     lora_ranks: torch.Tensor
 
