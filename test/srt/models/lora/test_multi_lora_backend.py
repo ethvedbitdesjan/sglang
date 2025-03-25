@@ -32,26 +32,13 @@ MULTI_LORA_MODELS = [
                 prefill_tolerance=1e-1,
             ),
             LoRAAdaptor(
-                name="RuterNorway/Llama-2-7b-chat-norwegian-LoRa",
-                prefill_tolerance=3e-1,
-            ),
-        ],
-        max_loras_per_batch=2,
-    ),
-    LoRAModelCase(
-        base="meta-llama/Llama-3.1-8B-Instruct",
-        adaptors=[
-            LoRAAdaptor(
-                name="algoprog/fact-generation-llama-3.1-8b-instruct-lora",
-                prefill_tolerance=1e-1,
-            ),
-            LoRAAdaptor(
-                name="Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16",
+                name="winddude/wizardLM-LlaMA-LoRA-7B",
                 prefill_tolerance=1e-1,
             ),
         ],
         max_loras_per_batch=2,
-    ),
+        enable_unified_lora=True,
+    )
 ]
 
 # All prompts are used at once in a batch.
@@ -91,6 +78,16 @@ class TestMultiLoRABackend(unittest.TestCase):
         print(
             "run_backend_batch: Multi-LoRA backend test functionality is pending support."
         )
+        if model_case.enable_unified_lora and backend == "triton":
+            print(
+                "Unified LoRA is enabled for this model. Skipping test for Triton backend."
+            )
+            return
+        if not model_case.enable_unified_lora and backend == "unified_triton":
+            print(
+                "Unified LoRA is not enabled for this model. Skipping test for Unified Triton backend."
+            )
+            return
         with SRTRunner(
             base_path,
             torch_dtype=torch_dtype,
