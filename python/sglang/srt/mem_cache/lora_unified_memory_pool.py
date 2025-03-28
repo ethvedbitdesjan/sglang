@@ -387,6 +387,7 @@ class LoraUnifiedMemoryPool:
 
     def init_lora_radix_cache(self, tree_cache: LoraRadixCache):
         # maintain a ref of tree_cache
+        print("init_lora_radix_cache")
         self.tree_cache = tree_cache
 
     # --- Core Memory Allocation Methods ---

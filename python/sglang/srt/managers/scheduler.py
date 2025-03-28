@@ -453,6 +453,7 @@ class Scheduler(SchedulerOutputProcessorMixin):
                 self.tree_cache = LoraRadixCache(
                     req_to_token_pool=self.req_to_token_pool,
                     token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
+                    page_size=self.page_size,
                 )
                 self.token_to_kv_pool_allocator.init_lora_radix_cache(self.tree_cache)
             else:
@@ -866,6 +867,7 @@ class Scheduler(SchedulerOutputProcessorMixin):
             f"#new-token: {adder.log_input_tokens}, "
             f"#cached-token: {adder.log_hit_tokens}, "
             f"token usage: {num_used / self.max_total_num_tokens:.2f}, "
+            f"cache usage: {self.tree_cache.evictable_size() / self.max_total_num_tokens:.2f}"
             f"#running-req: {running_bs}, "
             f"#queue-req: {len(self.waiting_queue)}, "
         )

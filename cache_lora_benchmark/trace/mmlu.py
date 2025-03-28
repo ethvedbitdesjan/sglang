@@ -11,11 +11,6 @@ import tiktoken
 from tqdm import tqdm
 
 # Configuration
-N_ADAPTERS = 5
-ALPHA = 1
-CV = 1
-LAMBDA_MIN = 0.1  # req/sec
-LAMBDA_MAX = 10.0  # req/sec
 BASE_URL = "http://127.0.0.1:30000/generate"
 
 tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
@@ -84,12 +79,7 @@ def load_mmlu_data(data_dir, nsub):
         for i in range(test_df.shape[0]):
             prompt_end = format_example(test_df, i, include_answer=False)
 
-            arguments.append(
-                {
-                    "examples": few_shot_examples,
-                    "question": prompt_end,
-                }
-            )
+            arguments.append(few_shot_examples + prompt_end)
 
             label = test_df.iloc[i, test_df.shape[1] - 1]
             labels.append(label)
@@ -115,56 +105,49 @@ def format_example(df, idx, include_answer=True):
     return prompt
 
 
-def generate_adapter_distribution(n, alpha):
-    """Generate adapter request rates with power-law distribution"""
-    u = np.random.uniform(size=n)
-    return LAMBDA_MIN / (1 - u * (1 - (LAMBDA_MIN / LAMBDA_MAX) ** (1 / alpha))) ** (
-        1 / alpha
-    )
+def generate_requests(prompts, num_adapters, alpha, req_rate, cv, duration, seed=42):
+    np.random.seed(seed)
+
+    tot_req = int(req_rate * duration)
+
+    # generate adapter id
+    probs = np.random.power(alpha, tot_req)
+    ind = (probs * num_adapters).astype(int)
+
+    print(ind)
+
+    # output_lens = np.random.randint(output_range[0], output_range[1], tot_req)
+
+    # generate timestamp
+    requests = []
+    tic = 0
+    shape = 1 / (cv * cv)
+    scale = cv * cv / req_rate
+    # intervals = np.random.exponential(1.0 / req_rate, tot_req)
+    intervals = np.random.gamma(shape, scale, tot_req)
+
+    adapter_indices = {i: 0 for i in range(num_adapters)}
+
+    for i in range(tot_req):
+        tic += intervals[i]
+        adapter_id = ind[i]
+        requests.append(
+            {
+                "timestamp": tic,
+                "adapter_id": adapter_id,
+                "data": prompts[adapter_indices[adapter_id]],
+                "lora_path": f"lora{adapter_id}",
+            }
+        )
+        adapter_indices[adapter_id] = adapter_indices[adapter_id] + 1
+    return requests
 
 
-def schedule_requests(arguments, lambdas, total_time=3600):
-    """Schedule requests with ordered question sequence per adapter"""
-    scheduled = []
-    question_indices = {i: 0 for i in range(len(lambdas))}
-
-    for adapter_id, l in enumerate(lambdas):
-        current_time = 0
-        current_idx = question_indices[adapter_id]
-
-        while current_time < total_time:
-            shape = 1 / (CV**2)
-            scale = CV**2 / l
-            interval = np.random.gamma(shape, scale)
-            current_time += interval
-
-            if current_time > total_time:
-                break
-
-            question = arguments[current_idx % len(arguments)]
-            scheduled.append(
-                {
-                    "timestamp": current_time,
-                    "adapter_id": adapter_id,
-                    "data": question,
-                    "lora_path": f"lora{adapter_id}",
-                    "question_id": current_idx % len(arguments),
-                    "cycle": current_idx // len(arguments),
-                }
-            )
-
-            current_idx += 1
-
-        question_indices[adapter_id] = current_idx
-
-    return sorted(scheduled, key=lambda x: x["timestamp"])
-
-
-def send_requests(scheduled_requests):
+def send_requests(requests):
     start_time = time.time()
     last_sent = 0
 
-    for i, req in enumerate(tqdm(scheduled_requests)):
+    for i, req in enumerate(requests):
         # Calculate wait time
         current_real_time = time.time() - start_time
         wait_time = req["timestamp"] - current_real_time
@@ -174,7 +157,7 @@ def send_requests(scheduled_requests):
 
         # Build payload
         payload = {
-            "text": [req["data"]["examples"] + req["data"]["question"]],
+            "text": [req["data"]],
             # "sampling_params": {"max_new_tokens": 1},
             "lora_path": [req["lora_path"]],
         }
@@ -189,7 +172,7 @@ def send_requests(scheduled_requests):
         # Print status
         if i % 100 == 0:
             tqdm.write(
-                f"Sent {i+1}/{len(scheduled_requests)} "
+                f"Sent {i+1}/{len(requests)} "
                 f"[Adapter {req['adapter_id']}] Status: {status}"
             )
 
@@ -198,14 +181,26 @@ def main(args):
     # Load MMLU data
     arguments, labels, num_questions = load_mmlu_data(args.data_dir, args.nsub)
 
-    # Generate adapter distribution
-    lambdas = generate_adapter_distribution(N_ADAPTERS, ALPHA)
+    N_ADAPTERS = 5
+    ALPHA = 2
+    CV = 1
+    REQ_RATE = 3
+    duration = 20
 
     # Schedule requests
-    scheduled_requests = schedule_requests(arguments, lambdas, args.duration)
+    requests = generate_requests(
+        texts=arguments,
+        num_adapters=N_ADAPTERS,
+        alpha=ALPHA,
+        req_rate=REQ_RATE,
+        cv=CV,
+        duration=duration,
+    )
+
+    print(requests)
 
     # Send requests
-    send_requests(scheduled_requests)
+    # send_requests(requests)
 
 
 if __name__ == "__main__":

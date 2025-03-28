@@ -421,13 +421,20 @@ class Req:
             if enable_hierarchical_cache:
                 self.prefix_indices, self.last_node, self.last_node_global = (
                     tree_cache.match_prefix(
-                        key=self.adjust_max_prefix_ids(), include_evicted=True
+                        key=self.adjust_max_prefix_ids(),
+                        include_evicted=True,
+                        adapter_name=self.lora_path,
                     )
                 )
             else:
+                tree_cache.pretty_print()
                 self.prefix_indices, self.last_node = tree_cache.match_prefix(
-                    rid=self.rid, key=self.adjust_max_prefix_ids()
+                    rid=self.rid,
+                    key=self.adjust_max_prefix_ids(),
+                    adapter_name=self.lora_path,
                 )
+                if len(self.prefix_indices) == 1:
+                    print(self.last_node)
         self.extend_input_len = len(self.fill_ids) - len(self.prefix_indices)
 
     def adjust_max_prefix_ids(self):

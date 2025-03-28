@@ -41,16 +41,11 @@ from transformers import (
 
 from sglang.bench_serving import (
     AIOHTTP_TIMEOUT,
-    SHAREGPT_URL,
-    BenchmarkMetrics,
     RequestFuncInput,
     RequestFuncOutput,
     calculate_metrics,
-    check_chat_template,
-    get_model,
     get_request,
     get_tokenizer,
-    parse_request_rate_range,
     remove_prefix,
     sample_random_requests,
 )

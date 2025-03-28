@@ -1,0 +1,5 @@
+python /u/cjia/sglang-common/sglang/cache_lora_benchmark/trace/benchmark.py --model=huggyllama/llama-7b --num-adapters=2 --duration=4 --gsp-num-groups=2 --gsp-prompts-per-group=4
+
+python -m sglang.launch_server --model huggyllama/llama-7b --lora-paths lora0=winddude/wizardLM-LlaMA-LoRA-7B lora1=RuterNorway/Llama-2-7b-chat-norwegian-LoRa --enable-unified-lora --disable-cuda-graph --max-loras-per-batch 4
+
+python -m sglang.launch_server --model huggyllama/llama-7b --lora-paths lora0=winddude/wizardLM-LlaMA-LoRA-7B lora1=RuterNorway/Llama-2-7b-chat-norwegian-LoRa --disable-radix-cache --disable-cuda-graph --max-loras-per-batch 4

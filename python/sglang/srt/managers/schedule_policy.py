@@ -492,8 +492,6 @@ class PrefillAdder:
                 # Non-chunked prefill
                 self.can_run_list.append(req)
                 self.tree_cache.inc_lock_ref(req.last_node)
-                print("self.tree_cache.inc_lock_ref(req.last_node)", req.last_node)
-                self.tree_cache.pretty_print()
                 self._prefill_one_req(
                     prefix_len,
                     input_tokens,

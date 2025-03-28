@@ -16,7 +16,7 @@ from sglang.srt.mem_cache.memory_pool import (
     ReqToTokenPool,
     TokenToKVPoolAllocator,
 )
-from sglang.srt.mem_cache.radix_cache import RadixCache, TreeNode, _key_match
+from sglang.srt.mem_cache.radix_cache import RadixCache, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,12 @@ class LoraRadixCache(RadixCache):
         self,
         req_to_token_pool: ReqToTokenPool,
         token_to_kv_pool_allocator: TokenToKVPoolAllocator,
+        page_size: int,
     ):
         self.eviction_policy: BaseEvictionPolicy = ComputeOnlyEvictionPolicy()
-        super().__init__(req_to_token_pool, token_to_kv_pool_allocator, disable=False)
+        super().__init__(
+            req_to_token_pool, token_to_kv_pool_allocator, page_size, disable=False
+        )
 
     ##### Public API #####
 
@@ -183,9 +186,9 @@ class LoraRadixCache(RadixCache):
         self.req_to_token_pool.free(req.req_pool_idx)
         self.dec_lock_ref(req.last_node)
 
-        print(" ")
-        print("cache_finished_req")
-        self.pretty_print()
+        # print(" ")
+        # print("cache_finished_req")
+        # self.pretty_print()
 
     def cache_unfinished_req(self, req: Req, token_ids: Optional[List[int]] = None):
         """Cache request when it is unfinished."""
@@ -218,11 +221,11 @@ class LoraRadixCache(RadixCache):
         req.prefix_indices = new_indices
         req.last_node = new_last_node
 
-        print(" ")
-        print("cache_unfinished_req")
-        self.pretty_print()
+        # print(" ")
+        # print("cache_unfinished_req")
+        # self.pretty_print()
 
-    def evict(self, num_cells: int, evict_callback: Callable):
+    def evict(self, num_cells: int):
         def get_utility(node):
             if isinstance(node, AdapterNode):
                 return self.eviction_policy.get_adapter_recover_utility(node)
@@ -245,12 +248,12 @@ class LoraRadixCache(RadixCache):
             assert x.lock_ref <= 0
 
             if isinstance(x, AdapterNode):
-                evict_callback(x.value.loc)
+                self.token_to_kv_pool_allocator.free(x.value.loc)
                 num_evicted += x.value.size
                 self._evict_adapter_node(x)
 
             elif isinstance(x, TreeNode):
-                evict_callback(x.value)
+                self.token_to_kv_pool_allocator.free(x.value)
                 num_evicted += len(x.value)
                 self._delete_leaf(x)
 
