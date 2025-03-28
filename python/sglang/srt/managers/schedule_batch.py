@@ -427,14 +427,12 @@ class Req:
                     )
                 )
             else:
-                tree_cache.pretty_print()
+                # tree_cache.pretty_print()
                 self.prefix_indices, self.last_node = tree_cache.match_prefix(
                     rid=self.rid,
                     key=self.adjust_max_prefix_ids(),
                     adapter_name=self.lora_path,
                 )
-                if len(self.prefix_indices) == 1:
-                    print(self.last_node)
         self.extend_input_len = len(self.fill_ids) - len(self.prefix_indices)
 
     def adjust_max_prefix_ids(self):

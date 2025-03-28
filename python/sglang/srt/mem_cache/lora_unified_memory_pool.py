@@ -545,7 +545,7 @@ class LoraUnifiedMemoryPool:
             raise ValueError(f"Unsupported attention type: {self.attention_type}")
         adapter_loc = self.alloc(required_size)
         if adapter_loc is None:
-            self.tree_cache.evict(required_size, self.free)
+            self.tree_cache.evict(required_size)
             adapter_loc = self.alloc(required_size)
             if adapter_loc is None:
                 raise ValueError("no enough memory to allocate")

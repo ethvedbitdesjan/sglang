@@ -226,6 +226,8 @@ class LoraRadixCache(RadixCache):
         # self.pretty_print()
 
     def evict(self, num_cells: int):
+        print("evict num_token", num_cells)
+
         def get_utility(node):
             if isinstance(node, AdapterNode):
                 return self.eviction_policy.get_adapter_recover_utility(node)

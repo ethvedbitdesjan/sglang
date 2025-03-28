@@ -861,6 +861,13 @@ class Scheduler(SchedulerOutputProcessorMixin):
             self._largest_prefill_len, adder.log_input_tokens
         )
 
+        import json
+
+        path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/trace/acc.txt"
+        record = {"new": adder.log_input_tokens, "cached": adder.log_hit_tokens}
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
         f = (
             f"Prefill batch. "
             f"#new-seq: {len(can_run_list)}, "

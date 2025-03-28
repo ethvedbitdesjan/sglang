@@ -603,7 +603,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gsp-num-groups",
         type=int,
-        default=64,
+        default=32,
         help="Number of system prompt groups for generated-shared-prefix dataset",
     )
     parser.add_argument(
