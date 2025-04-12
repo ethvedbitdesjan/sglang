@@ -121,7 +121,7 @@ class UnifiedTritonLoRABackend:
             q_base_output, k_base_output, v_base_output = None, None, None
 
         # if QKV_COUNT in [0, 1, 1056, 1057]:
-        #     LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+        #     LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
         #     os.makedirs(LOG_DIR, exist_ok=True)
         #     torch.save(base_output, os.path.join(LOG_DIR, f"base_output_{QKV_COUNT}.pt"))
         #     torch.save(unified_k_buffer, os.path.join(LOG_DIR, f"unified_k_buffer_{QKV_COUNT}.pt"))
@@ -139,7 +139,7 @@ class UnifiedTritonLoRABackend:
             qkvo=0,
         )
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(q_lora_a_output, os.path.join(LOG_DIR, f"q_lora_a_output_{QKV_COUNT}.pt"))
             
@@ -153,7 +153,7 @@ class UnifiedTritonLoRABackend:
             base_output=q_base_output,
         )
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(q_lora_output, os.path.join(LOG_DIR, f"q_lora_output_{QKV_COUNT}.pt"))
         # K processing - use independent tensor copies
@@ -164,7 +164,7 @@ class UnifiedTritonLoRABackend:
             qkvo=1,
         )
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(k_lora_a_output, os.path.join(LOG_DIR, f"k_lora_a_output_{QKV_COUNT}.pt"))
         k_lora_output = lora_expand_fwd(
@@ -177,7 +177,7 @@ class UnifiedTritonLoRABackend:
             base_output=k_base_output,
         )
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(k_lora_output, os.path.join(LOG_DIR, f"k_lora_output_{QKV_COUNT}.pt"))
         # V processing - use independent tensor copies
@@ -188,7 +188,7 @@ class UnifiedTritonLoRABackend:
             qkvo=2,
         )
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(v_lora_a_output, os.path.join(LOG_DIR, f"v_lora_a_output_{QKV_COUNT}.pt"))
         v_lora_output = lora_expand_fwd(
@@ -201,7 +201,7 @@ class UnifiedTritonLoRABackend:
             base_output=v_base_output,
         )
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/unified/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/unified/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(v_lora_output, os.path.join(LOG_DIR, f"v_lora_output_{QKV_COUNT}.pt"))
         # Merge outputs - ensure using independent tensor copies
