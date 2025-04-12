@@ -18,7 +18,11 @@ from sglang.srt.layers.linear import (
 from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from sglang.srt.lora.backend import BaseLoRABackend
 from sglang.srt.lora.backend.unified_triton_backend import UnifiedTritonLoRABackend
-
+import time
+import os
+COUNT_QKV = 0
+COUNT_O_DOWN = 0
+CURRENT_TIMESTAMP = time.strftime("%Y%m%d-%H%M%S")
 
 class BaseLayerWithLoRA(nn.Module):
     def __init__(
@@ -219,17 +223,25 @@ class QKVParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
             )
 
     def apply_lora(self, base_output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        global COUNT_QKV
+        LOG_DIR = "/u/vvjain3/sglang_logs/triton/layers/"+CURRENT_TIMESTAMP
+        os.makedirs(LOG_DIR, exist_ok=True)
         backend_kwargs = {"base_output": base_output}
         if self.lora_backend.fuse_stacked_lora_b:
             backend_kwargs["output_offset"] = self.output_offset
             backend_kwargs["max_qkv_out_dim"] = self.max_qkv_out_dim
 
+        torch.save(base_output, os.path.join(LOG_DIR, f"base_output_bef_qkv_{COUNT_QKV}.pt"))
         lora_output = self.lora_backend.run_qkv_lora(
             x,
             self.A_buffer_qkv,
             self.B_buffer_qkv,
             **backend_kwargs,
         )
+        torch.save(base_output, os.path.join(LOG_DIR, f"base_output_aft_qkv_{COUNT_QKV}.pt"))
+        torch.save(lora_output, os.path.join(LOG_DIR, f"lora_output_qkv_{COUNT_QKV}.pt"))
+        COUNT_QKV += 1
+        
         return (
             lora_output
             if self.lora_backend.fuse_output_add
@@ -272,13 +284,20 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
         self.B_buffer = B_buffer
 
     def apply_lora(self, base_output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        global COUNT_O_DOWN
+        LOG_DIR = "/u/vvjain3/sglang_logs/triton/layers/"+CURRENT_TIMESTAMP
+        os.makedirs(LOG_DIR, exist_ok=True)
         backend_kwargs = {"base_output": base_output}
+        torch.save(base_output, os.path.join(LOG_DIR, f"base_output_bef_o_down_{COUNT_O_DOWN}.pt"))
         lora_a_output = self.lora_backend.run_lora_a_sgemm(x, self.A_buffer)
         lora_output = self.lora_backend.run_lora_b_sgemm(
             lora_a_output,
             self.B_buffer[0],
             **backend_kwargs,
         )
+        torch.save(base_output, os.path.join(LOG_DIR, f"base_output_aft_o_down_{COUNT_O_DOWN}.pt"))
+        torch.save(lora_output, os.path.join(LOG_DIR, f"lora_output_o_down_{COUNT_O_DOWN}.pt"))
+        COUNT_O_DOWN += 1
         return (
             lora_output
             if self.lora_backend.fuse_output_add

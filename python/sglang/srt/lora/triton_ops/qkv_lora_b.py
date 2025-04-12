@@ -156,7 +156,7 @@ def qkv_lora_b_fwd(
         output = torch.empty((s, output_dim), device=x.device, dtype=x.dtype)
         fuse_scaling_add = False
     else:
-        output = base_output
+        output = base_output.clone()  # Clone to avoid modifying the original tensor
         fuse_scaling_add = True
 
     _qkv_lora_b_kernel[grid_b](

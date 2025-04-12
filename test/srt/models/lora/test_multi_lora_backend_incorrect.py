@@ -28,17 +28,13 @@ MULTI_LORA_MODELS = [
         base="meta-llama/Llama-2-7b-hf",
         adaptors=[
             LoRAAdaptor(
-                name="RuterNorway/Llama-2-7b-chat-norwegian-LoRa",
-                prefill_tolerance=3e-1,
-            ),
-            LoRAAdaptor(
                 name="winddude/wizardLM-LlaMA-LoRA-7B",
                 prefill_tolerance=1e-1,
             ),
-            # LoRAAdaptor(
-            #     name="RuterNorway/Llama-2-7b-chat-norwegian-LoRa",
-            #     prefill_tolerance=3e-1,
-            # ),
+            LoRAAdaptor(
+                name="RuterNorway/Llama-2-7b-chat-norwegian-LoRa",
+                prefill_tolerance=3e-1,
+            ),
         ],
         max_loras_per_batch=2,
         enable_unified_lora=True,
@@ -47,7 +43,7 @@ MULTI_LORA_MODELS = [
 
 # All prompts are used at once in a batch.
 PROMPTS = [
-    # "AI is a field of computer science focused on",
+    "AI is a field of computer science focused on",
     """
     ### Instruction:
     Tell me about llamas and alpacas
@@ -57,7 +53,7 @@ PROMPTS = [
     What do you know about llamas?
     ### Answer:
     """,
-    "AI is a field of computer science focused on",
+    # "AI is a field of computer science focused on",
 ]
 
 

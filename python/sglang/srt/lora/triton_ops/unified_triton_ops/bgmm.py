@@ -145,7 +145,8 @@ if triton.__version__ >= "2.1.0":
             output = torch.empty((S, N), device=x.device, dtype=x.dtype)
             fuse_scaling_add = False
         else:
-            output = base_output
+            # Always use deep copy to avoid modifying the original tensor
+            output = base_output.detach().clone()
             fuse_scaling_add = True
 
         num_warps = 4
