@@ -224,7 +224,7 @@ class QKVParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
 
     def apply_lora(self, base_output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         global COUNT_QKV
-        LOG_DIR = "/u/vvjain3/sglang_logs/triton/layers/"+CURRENT_TIMESTAMP
+        LOG_DIR = "~/sglang_logs/triton/layers/"+CURRENT_TIMESTAMP
         os.makedirs(LOG_DIR, exist_ok=True)
         backend_kwargs = {"base_output": base_output}
         if self.lora_backend.fuse_stacked_lora_b:
@@ -285,7 +285,7 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
 
     def apply_lora(self, base_output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         global COUNT_O_DOWN
-        LOG_DIR = "/u/vvjain3/sglang_logs/triton/layers/"+CURRENT_TIMESTAMP
+        LOG_DIR = "~/sglang_logs/triton/layers/"+CURRENT_TIMESTAMP
         os.makedirs(LOG_DIR, exist_ok=True)
         backend_kwargs = {"base_output": base_output}
         torch.save(base_output, os.path.join(LOG_DIR, f"base_output_bef_o_down_{COUNT_O_DOWN}.pt"))

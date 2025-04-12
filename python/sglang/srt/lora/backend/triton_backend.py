@@ -52,7 +52,7 @@ class TritonLoRABackend(BaseLoRABackend):
         assert isinstance(qkv_lora_b, torch.Tensor)
 
         if QKV_COUNT in [0, 1, 1056, 1057]:
-            LOG_DIR = os.path.join("/u/vvjain3/sglang_logs/triton/backend", CURRENT_TIME)
+            LOG_DIR = os.path.join("~/sglang_logs/triton/backend", CURRENT_TIME)
             os.makedirs(LOG_DIR, exist_ok=True)
             torch.save(base_output, os.path.join(LOG_DIR, f"base_output_{QKV_COUNT}.pt"))
             torch.save(x, os.path.join(LOG_DIR, f"x_{QKV_COUNT}.pt"))
