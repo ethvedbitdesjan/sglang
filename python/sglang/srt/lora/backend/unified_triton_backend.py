@@ -79,7 +79,9 @@ class UnifiedTritonLoRABackend:
         assert isinstance(unified_v_buffer, torch.Tensor)
         output_dim_q = self.batch_info.output_dim_q
         output_dim_kv = self.batch_info.output_dim_kv
-        q_base_output, k_base_output, v_base_output = base_output.split(
+
+        base_output_clone = base_output.clone()
+        q_base_output, k_base_output, v_base_output = base_output_clone.split(
             [output_dim_q, output_dim_kv, output_dim_kv], dim=-1
         )
 

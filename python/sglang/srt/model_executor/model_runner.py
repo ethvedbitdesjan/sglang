@@ -771,6 +771,7 @@ class ModelRunner:
 
         if self.server_args.enable_unified_lora:
             self.token_to_kv_pool_allocator = LoraUnifiedMemoryPool(
+                # size=500,
                 size=self.max_total_num_tokens,
                 dtype=self.kv_cache_dtype,
                 device=self.device,

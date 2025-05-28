@@ -512,7 +512,7 @@ class LoraUnifiedMemoryPool:
         self.token_to_kv_pool.transfer(indices, flat_data)
 
     # --- LoRA Adapter Methods ---
-    def alloc_lora_adapter(self, uid: str, rank: int) -> bool:
+    def alloc_lora_adapter(self, uid: str, rank: int) -> AdapterInfo:
         if self.attention_type == AttentionType.MHA:
             head_ratio = (
                 self.attention_config.attn_head_num // self.attention_config.kv_head_num
@@ -545,9 +545,14 @@ class LoraUnifiedMemoryPool:
             raise ValueError(f"Unsupported attention type: {self.attention_type}")
         adapter_loc = self.alloc(required_size)
         if adapter_loc is None:
-            self.tree_cache.evict(required_size)
+            self.tree_cache.evict(required_size - self.available_size())
             adapter_loc = self.alloc(required_size)
             if adapter_loc is None:
+                self.tree_cache.force_evict(required_size)
+                adapter_loc = self.alloc(required_size)
+            if adapter_loc is None:
+                print("required_size", required_size)
+                self.tree_cache.pretty_print()
                 raise ValueError("no enough memory to allocate")
 
         return AdapterInfo(
@@ -591,6 +596,7 @@ class LoraUnifiedMemoryPool:
         lora_paths: List[str],
         cur_uids: Set[Optional[str]],
         lora_adapters: Dict[str, LoRAAdapter],
+        is_prefill: bool,
     ):
         self.cur_adapters = {}
         self.uid_to_buffer_id = {}
@@ -600,11 +606,14 @@ class LoraUnifiedMemoryPool:
 
         cur_uids = list(sorted(cur_uids))
         for buffer_id, uid in enumerate(cur_uids):
-            if uid == None:
-                break
+            # if uid == None:
+            #     break
             # assert(uid is not None)
             self.uid_to_buffer_id[uid] = buffer_id
             self.buffer_id_to_uid.append(uid)
+            if uid == None:
+                break
+
             if (
                 uid in self.tree_cache.root_node.active_adapters
                 and self.tree_cache.root_node.active_adapters[uid] != None
@@ -622,7 +631,9 @@ class LoraUnifiedMemoryPool:
             )
 
         self.tree_cache.cache_adapters(
-            lora_paths_in_batch=lora_paths, adapter_infos=self.cur_adapters
+            lora_paths_in_batch=lora_paths,
+            adapter_infos=self.cur_adapters,
+            is_prefill=is_prefill,
         )
 
     def _load_lora_weight_to_buffer(

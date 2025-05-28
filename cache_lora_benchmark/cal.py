@@ -19,8 +19,4 @@ def calculate_cache_rate(path):
     return cached_total / total if total else 0.0
 
 
-print(
-    calculate_cache_rate(
-        "/u/cjia/sglang-common/sglang/cache_lora_benchmark/trace/acc.txt"
-    )
-)
+print(calculate_cache_rate("/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"))

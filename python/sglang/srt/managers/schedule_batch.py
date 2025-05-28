@@ -668,7 +668,9 @@ class ScheduleBatch:
     def alloc_token_slots(self, num_tokens: int):
         if self.token_to_kv_pool_allocator.available_size() < num_tokens:
             if self.tree_cache is not None:
-                self.tree_cache.evict(num_tokens)
+                self.tree_cache.evict(
+                    num_tokens - self.token_to_kv_pool_allocator.available_size()
+                )
 
         out_cache_loc = self.token_to_kv_pool_allocator.alloc(num_tokens)
         if out_cache_loc is None:
@@ -677,6 +679,8 @@ class ScheduleBatch:
                 f"{phase_str} out of memory. Try to lower your batch size.\n"
                 f"Try to allocate {num_tokens} tokens.\n"
                 f"Avaliable tokens: {self.token_to_kv_pool_allocator.available_size() + self.tree_cache.evictable_size()}\n"
+                f"Avaliable tokens: {self.token_to_kv_pool_allocator.available_size()}\n"
+                f"Avaliable tokens: {self.tree_cache.evictable_size()}\n"
             )
             logger.error(error_msg)
             if self.tree_cache is not None:

@@ -127,7 +127,10 @@ class UnifiedLoRAManager:
         cur_uids = set(forward_batch.lora_paths)
         assert len(cur_uids) <= self.max_loras_per_batch
         self.memory_pool.prepare_lora_batch(
-            forward_batch.lora_paths, cur_uids, self.loras
+            forward_batch.lora_paths,
+            cur_uids,
+            self.loras,
+            is_prefill=forward_batch.forward_mode.is_extend(),
         )
 
         # FIXME: Handle lora uid with None more safely

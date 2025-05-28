@@ -1,0 +1,60 @@
+# install sglang
+pip install -e "python[all]"
+
+# system prompt
+python benchmark.py
+    --model=huggyllama/llama-7b \
+    --benchmark=multi_turn \
+    --num-adapters=64 \
+    --duration=600 \
+    --alpha=2 \
+    --req-rate=0.4 \
+    --len-q=64 \
+    --len-a=128 \
+    --turns=8 \
+    --system-prompt-len=256
+
+python -m sglang.launch_server \
+    --model huggyllama/llama-7b \
+    --lora-paths $(for i in {0..64}; do echo -n "lora$i=winddude/wizardLM-LlaMA-LoRA-7B  "; done) \
+    --enable-unified-lora --disable-cuda-graph --max-loras-per-batch 64
+
+# --lora-paths $(for i in {0..32}; do echo -n "lora$i=winddude/wizardLM-LlaMA-LoRA-7B  "; done) $(for i in {32..64}; do echo -n "lora$i=RuterNorway/Llama-2-7b-chat-norwegian-LoRa  "; done) \
+
+
+
+
+# multi-turn
+
+python benchmark.py
+    --model=huggyllama/llama-7b \
+    --benchmark=multi_turn \
+    --num-adapters=64 \
+    --duration=270 \
+    --alpha=2 \
+    --req-rate=0.5 \
+    --len-q=32 \
+    --len-a=128  \
+    --turns=6 \
+    --system-prompt-len=1024
+
+python -m sglang.launch_server \
+    --model huggyllama/llama-7b \
+    --lora-paths $(for i in {0..64}; do echo -n "lora$i=winddude/wizardLM-LlaMA-LoRA-7B  "; done) \
+    --enable-unified-lora --disable-cuda-graph --max-loras-per-batch 64
+
+
+
+
+
+
+# python -m sglang.launch_server \
+#     --model meta-llama/Llama-3.1-8B-Instruct \
+#     --lora-paths $(for i in {0..64}; do echo -n "lora$i=Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16  "; done) \
+#     --enable-unified-lora --disable-cuda-graph --max-loras-per-batch 64
+
+# Nutanix/Meta-Llama-3.1-8B-Instruct_lora_4_alpha_16
+# algoprog/fact-generation-llama-3.1-8b-instruct-lora
+
+# python -m sglang.launch_server --model huggyllama/llama-7b --lora-paths lora0=winddude/wizardLM-LlaMA-LoRA-7B lora1=RuterNorway/Llama-2-7b-chat-norwegian-LoRa --enable-unified-lora --disable-cuda-graph --max-loras-per-batch 4
+# python -m sglang.launch_server --model huggyllama/llama-7b --lora-paths lora0=winddude/wizardLM-LlaMA-LoRA-7B lora1=RuterNorway/Llama-2-7b-chat-norwegian-LoRa --disable-radix-cache --disable-cuda-graph --max-loras-per-batch 4

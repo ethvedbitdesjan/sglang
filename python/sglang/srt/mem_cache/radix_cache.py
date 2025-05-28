@@ -67,6 +67,15 @@ class TreeNode:
     def __lt__(self, other: "TreeNode"):
         return self.last_access_time < other.last_access_time
 
+    def __repr__(self):
+        return (
+            f"TreeNode("
+            f"id={self.id}, "
+            f"size={len(self.value)}, "
+            f"is_lock={self.lock_ref > 0}, "
+            f")"
+        )
+
 
 def _key_match_page_size1(key0: List, key1: List):
     i = 0

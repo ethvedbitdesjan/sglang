@@ -100,6 +100,8 @@ def sample_generated_shared_prefix_requests(
     # Shuffle questions
     random.shuffle(input_requests)
 
+    print(input_requests[:5])
+
     # Print statistics
     print(f"\nGenerated shared prefix dataset statistics:")
     print(f"Number of groups: {num_groups}")
