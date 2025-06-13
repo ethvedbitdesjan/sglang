@@ -474,11 +474,13 @@ def generate_system_prompts_trace(
     adapter_num,
     alpha,
     system_prompt_num,
+    req_num=100000,
+    duration=100000,
 ):
-    n = 100000
+    n = req_num
     obj_size = 1
-    time_span = 100000
-    batch_size = 100000
+    time_span = duration
+    batch_size = req_num
 
     trace = []
     i = 0
@@ -495,11 +497,17 @@ def generate_system_prompts_trace(
 
 
 def generate_multi_turn_trace(
-    adapter_num, alpha, system_prompt_num, multi_turn_num, think_time, req_num=100000
+    adapter_num,
+    alpha,
+    system_prompt_num,
+    multi_turn_num,
+    think_time,
+    req_num=100000,
+    duration=100000,
 ):
     n = req_num
     obj_size = 1
-    time_span = req_num
+    time_span = duration
     batch_size = req_num
 
     trace = []
@@ -514,6 +522,8 @@ def generate_multi_turn_trace(
             adapter_id = obj // system_prompt_num
             prompt_id = obj % system_prompt_num
             trace.append((ts, adapter_id, prompt_id))
+
+    return trace
 
     conversation_id_dict = {}
 

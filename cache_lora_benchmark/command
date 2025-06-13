@@ -2,17 +2,7 @@
 pip install -e "python[all]"
 
 # system prompt
-python benchmark.py
-    --model=huggyllama/llama-7b \
-    --benchmark=multi_turn \
-    --num-adapters=64 \
-    --duration=600 \
-    --alpha=2 \
-    --req-rate=0.4 \
-    --len-q=64 \
-    --len-a=128 \
-    --turns=8 \
-    --system-prompt-len=256
+python /u/cjia/sglang-common/sglang/cache_lora_benchmark/trace/benchmark.py --model=huggyllama/llama-7b --num-adapters=8 --duration=30 --alpha=1
 
 python -m sglang.launch_server \
     --model huggyllama/llama-7b \

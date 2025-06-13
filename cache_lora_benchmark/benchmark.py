@@ -34,6 +34,7 @@ import numpy as np
 import requests
 from mmlu import sample_generated_mmlu_requests
 from shared_prefix import sample_generated_shared_prefix_requests
+from simulation import generate_multi_turn_trace, generate_system_prompts_trace
 from tqdm.asyncio import tqdm
 from transformers import (
     AutoTokenizer,
@@ -118,13 +119,8 @@ async def async_request_multi_turn(
         s = ""
         s += qas["system_prompt"]
         qas = qas["qas"]
-        random_number = random.randint(5, 9)
-        # for i in range(random_number):
-        #     qa = qas[i]
         for i, qa in enumerate(qas):
-            # thinking_time = generate_thinking_time(mean=3.0)
-            # print(f"用户思考时间: {thinking_time:.2f}秒")
-            # await asyncio.sleep(thinking_time)
+            await asyncio.sleep(args.thinking_time)
             s += qa["prompt"]
             s += await call_generate(
                 session=session,
@@ -306,34 +302,58 @@ def generate_multi_turn_requests(
 
     multi_qas = gen_arguments(args, tokenizer)
 
-    np.random.seed(seed)
+    # np.random.seed(seed)
     tot_req = int(req_rate * duration)
-    print(req_rate, duration, tot_req)
-    # generate adapter id
-    probs = np.random.power(alpha, tot_req)
-    ind = (probs * num_adapters).astype(int)
-    # output_lens = np.random.randint(output_range[0], output_range[1], tot_req)
-    # generate timestamp
-    requests = []
-    tic = 0
-    shape = 1 / (cv * cv)
-    scale = cv * cv / req_rate
-    # intervals = np.random.exponential(1.0 / req_rate, tot_req)
-    intervals = np.random.gamma(shape, scale, tot_req)
-    adapter_indices = {i: 0 for i in range(num_adapters)}
-    print(ind, tot_req)
-    for i in range(tot_req):
-        adapter_id = ind[i]
+    # print(req_rate, duration, tot_req)
+    # # generate adapter id
+    # probs = np.random.power(alpha, tot_req)
+    # ind = (probs * num_adapters).astype(int)
+    # # output_lens = np.random.randint(output_range[0], output_range[1], tot_req)
+    # # generate timestamp
+    # requests = []
+    # tic = 0
+    # shape = 1 / (cv * cv)
+    # scale = cv * cv / req_rate
+    # # intervals = np.random.exponential(1.0 / req_rate, tot_req)
+    # intervals = np.random.gamma(shape, scale, tot_req)
+    # adapter_indices = {i: 0 for i in range(num_adapters)}
+    # print(ind, tot_req)
+
+    trace = generate_multi_turn_trace(
+        adapter_num=num_adapters,
+        alpha=alpha,
+        system_prompt_num=4,
+        multi_turn_num=args.turns,
+        think_time=args.think_time,
+        req_num=tot_req,
+        duration=duration,
+    )
+
+    pre_ts = 0
+    for ts, adapter_id, prompt_id in trace:
         requests.append(
             {
-                "interval": intervals[i],
+                "interval": ts - pre_ts,
                 "adapter_id": adapter_id,
-                "qas": multi_qas[adapter_indices[adapter_id]],
+                "qas": multi_qas[prompt_id],
                 "lora_path": f"lora{adapter_id}",
             }
         )
-        adapter_indices[adapter_id] = adapter_indices[adapter_id] + 1
+        pre_ts = ts
     return requests
+
+    # for i in range(tot_req):
+    #     adapter_id = ind[i]
+    #     requests.append(
+    #         {
+    #             "interval": intervals[i],
+    #             "adapter_id": adapter_id,
+    #             "qas": multi_qas[adapter_indices[adapter_id]],
+    #             "lora_path": f"lora{adapter_id}",
+    #         }
+    #     )
+    #     adapter_indices[adapter_id] = adapter_indices[adapter_id] + 1
+    # return requests
 
 
 def get_access_cache_path(num_adapters, alpha, req_rate, cv, duration):
@@ -365,7 +385,7 @@ def generate_system_prompt_requests(
     input_requests = sample_generated_shared_prefix_requests(
         args=args,
         num_groups=args.gsp_num_groups,
-        prompts_per_group=args.gsp_prompts_per_group,
+        prompts_per_group=1,
         system_prompt_len=args.gsp_system_prompt_len,
         question_len=args.gsp_question_len,
         output_len=args.gsp_output_len,
@@ -376,13 +396,13 @@ def generate_system_prompt_requests(
         prompt_lens.append(req[1])
         max_new_tokens.append(req[2])
 
-    cache_path = get_access_cache_path(
-        num_adapters=num_adapters,
-        alpha=alpha,
-        req_rate=req_rate,
-        cv=cv,
-        duration=duration,
-    )
+    # cache_path = get_access_cache_path(
+    #     num_adapters=num_adapters,
+    #     alpha=alpha,
+    #     req_rate=req_rate,
+    #     cv=cv,
+    #     duration=duration,
+    # )
     # Try to load from cache first
     # if cache_path.exists():
     #     print(f"\nLoading cached generated input data from {cache_path}")
@@ -391,42 +411,65 @@ def generate_system_prompt_requests(
     #         ind =  pickle.load(f)
     #         print(ind, tot_req)
     # else:
-    np.random.seed(seed)
-    tot_req = int(req_rate * duration)
-    # generate adapter id
-    probs = np.random.power(alpha, tot_req)
-    ind = (probs * num_adapters).astype(int)
-    # generate timestamp
-    requests = []
-    tic = 0
-    shape = 1 / (cv * cv)
-    scale = cv * cv / req_rate
-    # intervals = np.random.exponential(1.0 / req_rate, tot_req)
-    intervals = np.random.gamma(shape, scale, tot_req)
-    adapter_indices = {i: 0 for i in range(num_adapters)}
-    # ind = [39, 62, 54 ,49 ,25 ,25 ,15 ,59 ,49 ,53  ,9 ,63 ,58 ,29 ,27 ,27 ,35 ,46 ,42 ,34 ,50 ,23 ,34 ,38, 43 ,56 ,28 ,45 ,49 ,13 ,49 ,26 ,16 ,62 ,62 ,57 ,35 ,20 ,52 ,42 ,22 ,45 ,11 ,61 ,32 ,52 ,35 ,46, 47 ,27 ,63 ,56 ,62 ,60 ,49 ,61 ,19 ,28 ,13 ,36 ,39 ,33 ,58 ,38 ,33 ,47 ,24 ,57 ,17 ,63 ,56 ,28, 4 ,57 ,53 ,54 ,56 ,17 ,38 ,21 ,59 ,50 ,36 ,16 ,35 ,36 ,54 ,51 ,60 ,43 ,22 ,54 ,55 ,47 ,56 ,44,46 ,41 ,10 ,21 ,11 ,51 ,35 ,45 ,60 ,31 ,40 ,55 ,30 ,17 ,34 ,25 ,61 ,57 ,50 ,59 ,57 ,27 ,60 ,47,57 ,60 ,36 ,21 ,30 ,41 ,57 ,59  ,5 ,45 ,41 ,30 ,22 ,37 ,62 ,36 ,46 ,53 ,38 ,63 ,62 ,32 ,45 ,35,34 ,12 ,49 ,45 ,14 ,33 ,60 ,31 ,24 ,44 ,63 ,31 ,52 ,55 ,31 ,54 ,38 ,50 ,50 ,46 ,19 ,58 ,36 ,27,12 ,49 ,52  ,8 ,45 ,30 ,51 ,26 ,53 ,39 ,61 ,23 ,37 ,21 ,61 ,59 ,32 ,51 ,57 ,47 ,46 ,31 ,19 ,60,60 ,50 ,37 ,37 ,54 ,60 ,60 ,56 ,51 ,18 ,25 ,60 ,49 , 6 ,20 ,52  ,4 ,25 ,47 ,53 ,51 ,30 ,54 ,31,36 ,55 ,51 ,58 ,51 ,48 ,19 ,38 ,32 ,31 ,63 ,40 ,60 ,50 ,57 ,45 ,48 ,44 ,28 ,54 ,33 , 9 ,51 ,26,62 ,62 ,61 ,38  ,7 ,61 ,41 ,62 ,62 ,59 ,34 ,39 ,59, 36 ,26 ,47 ,61 ,53 ,48 ,19 ,50 ,63 ,23 ,46,59 ,55 ,53 ,53 ,38 ,34 ,57 ,57 ,59 ,61 ,45 ,45 ,57 ,51 ,53 ,57 ,60 ,37 ,39 ,19 ,48 ,12 ,43 ,47,34 ,49 ,11 ,12 ,58 ,38 ,22 ,46 ,56 ,29 ,50 ,18 ,14 ,46 ,47 ,51 ,54 ,63 ,45 ,36 ,57 ,33 ,42 ,17,10 ,62 ,58 ,53 ,40 ,26 ,25 ,32 ,47 ,54 ,52 ,33 ,62 ,54 ,47 ,50 ,41 ,31 ,38 ,55  ,7 ,21 ,13 ,12,59 ,53 ,44 ,20 ,44 ,44 ,26 ,42 ,40 ,50 ,51 ,13, 39 ,50 ,45 ,59 ,51 ,25 ,17 ,51 ,10 ,48 ,62 ,48]
-    # tot_req = 255
-    print(ind, tot_req)
+    # np.random.seed(seed)
+    # tot_req = int(req_rate * duration)
+    # # generate adapter id
+    # probs = np.random.power(alpha, tot_req)
+    # ind = (probs * num_adapters).astype(int)
+    # # generate timestamp
+    # requests = []
+    # tic = 0
+    # shape = 1 / (cv * cv)
+    # scale = cv * cv / req_rate
+    # # intervals = np.random.exponential(1.0 / req_rate, tot_req)
+    # intervals = np.random.gamma(shape, scale, tot_req)
+    # adapter_indices = {i: 0 for i in range(num_adapters)}
+    # # ind = [39, 62, 54 ,49 ,25 ,25 ,15 ,59 ,49 ,53  ,9 ,63 ,58 ,29 ,27 ,27 ,35 ,46 ,42 ,34 ,50 ,23 ,34 ,38, 43 ,56 ,28 ,45 ,49 ,13 ,49 ,26 ,16 ,62 ,62 ,57 ,35 ,20 ,52 ,42 ,22 ,45 ,11 ,61 ,32 ,52 ,35 ,46, 47 ,27 ,63 ,56 ,62 ,60 ,49 ,61 ,19 ,28 ,13 ,36 ,39 ,33 ,58 ,38 ,33 ,47 ,24 ,57 ,17 ,63 ,56 ,28, 4 ,57 ,53 ,54 ,56 ,17 ,38 ,21 ,59 ,50 ,36 ,16 ,35 ,36 ,54 ,51 ,60 ,43 ,22 ,54 ,55 ,47 ,56 ,44,46 ,41 ,10 ,21 ,11 ,51 ,35 ,45 ,60 ,31 ,40 ,55 ,30 ,17 ,34 ,25 ,61 ,57 ,50 ,59 ,57 ,27 ,60 ,47,57 ,60 ,36 ,21 ,30 ,41 ,57 ,59  ,5 ,45 ,41 ,30 ,22 ,37 ,62 ,36 ,46 ,53 ,38 ,63 ,62 ,32 ,45 ,35,34 ,12 ,49 ,45 ,14 ,33 ,60 ,31 ,24 ,44 ,63 ,31 ,52 ,55 ,31 ,54 ,38 ,50 ,50 ,46 ,19 ,58 ,36 ,27,12 ,49 ,52  ,8 ,45 ,30 ,51 ,26 ,53 ,39 ,61 ,23 ,37 ,21 ,61 ,59 ,32 ,51 ,57 ,47 ,46 ,31 ,19 ,60,60 ,50 ,37 ,37 ,54 ,60 ,60 ,56 ,51 ,18 ,25 ,60 ,49 , 6 ,20 ,52  ,4 ,25 ,47 ,53 ,51 ,30 ,54 ,31,36 ,55 ,51 ,58 ,51 ,48 ,19 ,38 ,32 ,31 ,63 ,40 ,60 ,50 ,57 ,45 ,48 ,44 ,28 ,54 ,33 , 9 ,51 ,26,62 ,62 ,61 ,38  ,7 ,61 ,41 ,62 ,62 ,59 ,34 ,39 ,59, 36 ,26 ,47 ,61 ,53 ,48 ,19 ,50 ,63 ,23 ,46,59 ,55 ,53 ,53 ,38 ,34 ,57 ,57 ,59 ,61 ,45 ,45 ,57 ,51 ,53 ,57 ,60 ,37 ,39 ,19 ,48 ,12 ,43 ,47,34 ,49 ,11 ,12 ,58 ,38 ,22 ,46 ,56 ,29 ,50 ,18 ,14 ,46 ,47 ,51 ,54 ,63 ,45 ,36 ,57 ,33 ,42 ,17,10 ,62 ,58 ,53 ,40 ,26 ,25 ,32 ,47 ,54 ,52 ,33 ,62 ,54 ,47 ,50 ,41 ,31 ,38 ,55  ,7 ,21 ,13 ,12,59 ,53 ,44 ,20 ,44 ,44 ,26 ,42 ,40 ,50 ,51 ,13, 39 ,50 ,45 ,59 ,51 ,25 ,17 ,51 ,10 ,48 ,62 ,48]
+    # # tot_req = 255
+    # print(ind, tot_req)
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Caching generated input data to {cache_path}")
-    with open(cache_path, "wb") as f:
-        pickle.dump(ind, f)
+    trace = generate_system_prompts_trace(
+        adapter_num=num_adapters,
+        alpha=alpha,
+        system_prompt_num=4,
+        req_num=tot_req,
+        duration=duration,
+    )
 
-    for i in range(tot_req):
-        adapter_id = ind[i]
+    # cache_path.parent.mkdir(parents=True, exist_ok=True)
+    # print(f"Caching generated input data to {cache_path}")
+    # with open(cache_path, "wb") as f:
+    #     pickle.dump(ind, f)
+
+    pre_ts = 0
+    for ts, adapter_id, prompt_id in trace:
         requests.append(
             {
-                "interval": intervals[i],
+                "interval": ts - pre_ts,
                 "adapter_id": adapter_id,
-                "prompt": prompts[adapter_indices[adapter_id]],
-                "max_new_tokens": max_new_tokens[adapter_indices[adapter_id]],
-                "prompt_len": prompt_lens[adapter_indices[adapter_id]],
+                "prompt": prompts[prompt_id],
+                "max_new_tokens": max_new_tokens[prompt_id],
+                "prompt_len": prompt_lens[prompt_id],
                 "lora_path": f"lora{adapter_id}",
             }
         )
-        adapter_indices[adapter_id] = adapter_indices[adapter_id] + 1
+        pre_ts = ts
     return requests
+
+    # for i in range(tot_req):
+    #     adapter_id = ind[i]
+    #     requests.append(
+    #         {
+    #             "interval": intervals[i],
+    #             "adapter_id": adapter_id,
+    #             "prompt": prompts[adapter_indices[adapter_id]],
+    #             "max_new_tokens": max_new_tokens[adapter_indices[adapter_id]],
+    #             "prompt_len": prompt_lens[adapter_indices[adapter_id]],
+    #             "lora_path": f"lora{adapter_id}",
+    #         }
+    #     )
+    #     adapter_indices[adapter_id] = adapter_indices[adapter_id] + 1
+    # return requests
 
 
 def generate_mmlu_requests(
