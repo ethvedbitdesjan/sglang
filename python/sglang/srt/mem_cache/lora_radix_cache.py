@@ -213,9 +213,9 @@ class LoraRadixCache(RadixCache):
         self.req_to_token_pool.free(req.req_pool_idx)
         self.dec_lock_ref(req.last_node)
 
-        print(" ")
-        print("cache_finished_req")
-        self.pretty_print()
+        # print(" ")
+        # print("cache_finished_req")
+        # self.pretty_print()
         # self.tree_sieve_cache_policy.print_list()
         # self.check_memory_leak()
 
@@ -252,9 +252,9 @@ class LoraRadixCache(RadixCache):
         req.prefix_indices = new_indices
         req.last_node = new_last_node
 
-        print(" ")
-        print("cache_unfinished_req")
-        self.pretty_print()
+        # print(" ")
+        # print("cache_unfinished_req")
+        # self.pretty_print()
         # self.tree_sieve_cache_policy.print_list()
         # if self.tree_sieve_cache_policy.hand is not None:
         #     print('hand:' ,self.tree_sieve_cache_policy.hand.key)
@@ -382,7 +382,7 @@ class LoraRadixCache(RadixCache):
                 (get_utility(node), node) for node in self._collect_evictable_nodes()
             ]
 
-            print("evictable_nodes", evictable_nodes)
+            # print("evictable_nodes", evictable_nodes)
 
             heapq.heapify(evictable_nodes)
 

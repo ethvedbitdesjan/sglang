@@ -120,7 +120,7 @@ async def async_request_multi_turn(
         s += qas["system_prompt"]
         qas = qas["qas"]
         for i, qa in enumerate(qas):
-            await asyncio.sleep(args.thinking_time)
+            await asyncio.sleep(args.think_time)
             s += qa["prompt"]
             s += await call_generate(
                 session=session,
@@ -310,7 +310,7 @@ def generate_multi_turn_requests(
     # ind = (probs * num_adapters).astype(int)
     # # output_lens = np.random.randint(output_range[0], output_range[1], tot_req)
     # # generate timestamp
-    # requests = []
+    requests = []
     # tic = 0
     # shape = 1 / (cv * cv)
     # scale = cv * cv / req_rate
@@ -321,7 +321,7 @@ def generate_multi_turn_requests(
 
     trace = generate_multi_turn_trace(
         adapter_num=num_adapters,
-        alpha=alpha,
+        alpha=float(alpha),
         system_prompt_num=4,
         multi_turn_num=args.turns,
         think_time=args.think_time,
@@ -412,12 +412,12 @@ def generate_system_prompt_requests(
     #         print(ind, tot_req)
     # else:
     # np.random.seed(seed)
-    # tot_req = int(req_rate * duration)
+    tot_req = int(req_rate * duration)
     # # generate adapter id
     # probs = np.random.power(alpha, tot_req)
     # ind = (probs * num_adapters).astype(int)
     # # generate timestamp
-    # requests = []
+    requests = []
     # tic = 0
     # shape = 1 / (cv * cv)
     # scale = cv * cv / req_rate
@@ -430,7 +430,7 @@ def generate_system_prompt_requests(
 
     trace = generate_system_prompts_trace(
         adapter_num=num_adapters,
-        alpha=alpha,
+        alpha=float(alpha),
         system_prompt_num=4,
         req_num=tot_req,
         duration=duration,
@@ -1066,6 +1066,11 @@ if __name__ == "__main__":
         "--duration",
         type=int,
         default=20,
+    )
+    parser.add_argument(
+        "--think-time",
+        type=int,
+        default=5,
     )
 
     parser.add_argument(

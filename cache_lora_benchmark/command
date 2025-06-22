@@ -1,8 +1,13 @@
 # install sglang
 pip install -e "python[all]"
 
+
+
 # system prompt
-python /u/cjia/sglang-common/sglang/cache_lora_benchmark/trace/benchmark.py --model=huggyllama/llama-7b --num-adapters=8 --duration=30 --alpha=1
+
+# num-adapters req-rate
+
+python /u/cjia/sglang-common/sglang/cache_lora_benchmark/benchmark.py --model=huggyllama/llama-7b --benchmark=system_prompt --num-adapters=64 --duration=600 --alpha=1 --req-rate=3
 
 python -m sglang.launch_server \
     --model huggyllama/llama-7b \
@@ -13,20 +18,22 @@ python -m sglang.launch_server \
 
 
 
-
 # multi-turn
 
-python benchmark.py
+# num-adapters think-time turns req-rate
+
+python /u/cjia/sglang-common/sglang/cache_lora_benchmark/benchmark.py \
     --model=huggyllama/llama-7b \
     --benchmark=multi_turn \
     --num-adapters=64 \
-    --duration=270 \
-    --alpha=2 \
+    --duration=600 \
+    --alpha=1 \
     --req-rate=0.5 \
     --len-q=32 \
     --len-a=128  \
     --turns=6 \
-    --system-prompt-len=1024
+    --system-prompt-len=1024 \
+    --think-time=2
 
 python -m sglang.launch_server \
     --model huggyllama/llama-7b \
