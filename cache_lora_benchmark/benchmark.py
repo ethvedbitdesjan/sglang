@@ -944,7 +944,7 @@ def run_benchmark(args_: argparse.Namespace):
 
     print(f"{args}\n")
 
-    file_path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+    file_path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
     with open(file_path, "r+") as f:
         f.truncate(0)
 

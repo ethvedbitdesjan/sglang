@@ -161,7 +161,7 @@ class LoraRadixCache(RadixCache):
                 if is_prefill:
                     import json
 
-                    path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+                    path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
                     record = {"new": adapter_node.value.size, "cached": 0}
                     with open(path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(record) + "\n")
@@ -169,7 +169,7 @@ class LoraRadixCache(RadixCache):
                 if is_prefill:
                     import json
 
-                    path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+                    path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
                     record = {
                         "new": adapter_node.value.size,
                         "cached": adapter_node.value.size,
@@ -266,7 +266,7 @@ class LoraRadixCache(RadixCache):
             self.token_to_kv_pool_allocator.free(node.value.loc)
 
             # import json
-            # path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/trace/acc.txt"
+            # path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/trace/acc.txt"
             # record = "evict_adapter_node adapter_name: " + x.adapter_name
             # with open(path, "a", encoding="utf-8") as f:
             #     f.write(json.dumps(record) + "\n")
@@ -299,7 +299,7 @@ class LoraRadixCache(RadixCache):
 
                 import json
 
-                path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+                path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
                 record = "evict_adapter_node adapter_name: " + x.adapter_name
                 with open(path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(record) + "\n")
@@ -347,7 +347,7 @@ class LoraRadixCache(RadixCache):
 
                     import json
 
-                    path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+                    path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
                     record = "evict_adapter_node adapter_name: " + x.adapter_name
                     with open(path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(record) + "\n")
@@ -398,7 +398,7 @@ class LoraRadixCache(RadixCache):
 
                     import json
 
-                    path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+                    path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
                     record = "evict_adapter_node adapter_name: " + x.adapter_name
                     with open(path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(record) + "\n")

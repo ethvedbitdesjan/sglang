@@ -454,7 +454,7 @@ def lfu_test():
     # print(cache.size)
 
 
-from lru import LRU
+
 
 
 def sieve_test():

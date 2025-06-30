@@ -604,7 +604,13 @@ class LoraUnifiedMemoryPool:
 
         buffer_id = 0
 
-        cur_uids = list(sorted(cur_uids))
+        # Filter out None values before sorting to avoid comparison error
+        original_cur_uids = cur_uids
+        cur_uids = list(sorted([uid for uid in cur_uids if uid is not None]))
+        # Add None at the end if it was in the original set
+        if None in original_cur_uids:
+            cur_uids.append(None)
+        
         for buffer_id, uid in enumerate(cur_uids):
             # if uid == None:
             #     break

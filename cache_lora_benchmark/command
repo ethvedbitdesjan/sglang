@@ -7,7 +7,7 @@ pip install -e "python[all]"
 
 # num-adapters req-rate
 
-python /u/cjia/sglang-common/sglang/cache_lora_benchmark/benchmark.py --model=huggyllama/llama-7b --benchmark=system_prompt --num-adapters=64 --duration=600 --alpha=1 --req-rate=3
+python /u/zchen21/Sglang/sglang/cache_lora_benchmark/benchmark.py --model=huggyllama/llama-7b --benchmark=system_prompt --num-adapters=64 --duration=600 --alpha=1 --req-rate=3
 
 python -m sglang.launch_server \
     --model huggyllama/llama-7b \
@@ -22,7 +22,7 @@ python -m sglang.launch_server \
 
 # num-adapters think-time turns req-rate
 
-python /u/cjia/sglang-common/sglang/cache_lora_benchmark/benchmark.py \
+python /u/zchen21/Sglang/sglang/cache_lora_benchmark/benchmark.py \
     --model=huggyllama/llama-7b \
     --benchmark=multi_turn \
     --num-adapters=64 \

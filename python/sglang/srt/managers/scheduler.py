@@ -863,7 +863,7 @@ class Scheduler(SchedulerOutputProcessorMixin):
 
         import json
 
-        path = "/u/cjia/sglang-common/sglang/cache_lora_benchmark/acc.txt"
+        path = "/u/zchen21/Sglang/sglang/cache_lora_benchmark/acc.txt"
         record = {
             "new": adder.log_input_tokens + adder.log_hit_tokens,
             "cached": adder.log_hit_tokens,
