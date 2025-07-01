@@ -21,7 +21,7 @@ class LoRAMemoryPool:
     def __init__(
         self,
         base_hf_config: AutoConfig,
-        max_loras_per_batch: int,
+        max_loras_per_batch: int,  # Keep for compatibility but will be ignored
         max_lora_dim: int,
         dtype: torch.dtype,
         tp_size: int,
@@ -31,18 +31,19 @@ class LoRAMemoryPool:
 
         self.base_hf_config: AutoConfig = base_hf_config
         self.num_layer: int = base_hf_config.num_hidden_layers
-        self.max_loras_per_batch: int = max_loras_per_batch
+        # Remove max_loras_per_batch limitation
+        # self.max_loras_per_batch: int = max_loras_per_batch
         self.max_lora_dim: int = max_lora_dim
         self.dtype: torch.dtype = dtype
         self.tp_size: int = tp_size
         self.tp_rank: int = tp_rank
         self.lora_modules: Dict[int, List[Tuple[str, BaseLayerWithLoRA]]] = lora_modules
 
-        # Both A_buffer and B_buffer maps lora weight names to its buffer space.
+        # Dynamic buffers that grow as needed
         # A_buffer contains num_layer number of row-major tensors with shape
-        #   (max_loras_per_batch, stacked_num * max_lora_dim, input_dim)
+        #   (current_loras, stacked_num * max_lora_dim, input_dim)
         # B_buffer contains num_layer number of column-major tensors with shape
-        #   (stacked_num, max_loras_per_batch, output_dim, max_lora_dim)
+        #   (stacked_num, current_loras, output_dim, max_lora_dim)
         self.A_buffer: Dict[str, List[torch.Tensor]] = {}
         self.B_buffer: Dict[str, List[torch.Tensor]] = {}
 
@@ -52,7 +53,10 @@ class LoRAMemoryPool:
         # Buffer idx -> lora uid in memory pool
         # All uids are initalized as empty strings for empty buffer slots
         # Here we don't initalize to None since None is a valid uid
-        self.buffer_id_to_uid: List[Optional[str]] = [""] * self.max_loras_per_batch
+        self.buffer_id_to_uid: List[Optional[str]] = []
+        
+        # Track current buffer size
+        self.current_buffer_size: int = 0
 
     def get_lora_A_shape(
         self, module_name: str, base_model: torch.nn.Module

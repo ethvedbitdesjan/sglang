@@ -92,6 +92,49 @@ async def call_generate(session, api_url, text, max_new_tokens, lora_path):
     return generated_text
 
 
+async def call_generate_with_timing(session, api_url, text, max_new_tokens, lora_path):
+    """
+    带时间戳记录的生成函数，返回生成文本和TTFT
+    """
+    payload = {
+        "text": text,
+        "sampling_params": {"max_new_tokens": max_new_tokens},
+        "lora_path": lora_path,
+    }
+    headers = {"Authorization": ""}
+
+    generated_text = ""
+    ttft = 0.0
+    st = time.perf_counter()
+    
+    try:
+        async with session.post(url=api_url, json=payload, headers=headers) as response:
+            if response.status == 200:
+                async for chunk_bytes in response.content:
+                    chunk_bytes = chunk_bytes.strip()
+                    if not chunk_bytes:
+                        continue
+                    chunk = remove_prefix(chunk_bytes.decode("utf-8"), "data: ")
+                    if chunk == "[DONE]":
+                        pass
+                    else:
+                        data = json.loads(chunk)
+
+                        # NOTE: Some completion API might have a last
+                        # usage summary response without a token so we
+                        # want to check a token was generated
+                        if data["text"]:
+                            # 记录第一个token的时间
+                            if ttft == 0.0:
+                                ttft = time.perf_counter() - st
+                            generated_text += data["text"]
+
+    except Exception:
+        raise ValueError("error")
+
+    return generated_text, ttft
+
+
 @dataclass
 class ExtraInfo:
     model_id: str
@@ -111,29 +154,66 @@ def generate_thinking_time(mean=1.0):
 # set ignore_eos True by default
 async def async_request_multi_turn(
     args, request: Dict[str, Any], extra_info: ExtraInfo, pbar: Optional[tqdm] = None
-) -> None:
+) -> RequestFuncOutput:
     qas = request["qas"]
     lora_path = request["lora_path"]
     api_url = extra_info.api_url
+    
+    # 存储每轮对话的TTFT
+    turn_ttfts = []
+    total_prompt_len = 0
+    total_generated_text = ""
+    
+    # 记录整个multiturn对话的开始时间
+    conversation_start_time = time.perf_counter()
+    
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         s = ""
         s += qas["system_prompt"]
+        total_prompt_len += len(qas["system_prompt"])
         qas = qas["qas"]
+        
         for i, qa in enumerate(qas):
             await asyncio.sleep(args.think_time)
             s += qa["prompt"]
-            s += await call_generate(
+            total_prompt_len += len(qa["prompt"])
+            
+            # 使用带时间戳记录的生成函数
+            generated_text, turn_ttft = await call_generate_with_timing(
                 session=session,
                 api_url=api_url,
                 text=s,
                 max_new_tokens=qa["new_tokens"],
                 lora_path=lora_path,
             )
+            s += generated_text
+            total_generated_text += generated_text
+            turn_ttfts.append(turn_ttft)
+    
+    # 计算整个对话的总延迟
+    total_latency = time.perf_counter() - conversation_start_time
+    
     if pbar:
         pbar.update(1)
 
     output = RequestFuncOutput()
     output.success = True
+    output.prompt_len = total_prompt_len
+    output.generated_text = total_generated_text
+    output.latency = total_latency
+    
+    # 计算总的生成token数量（用于throughput计算）
+    total_new_tokens = sum(qa["new_tokens"] for qa in qas)
+    output.output_len = total_new_tokens
+    
+    # 计算平均TTFT - 这是multiturn的mean ttft
+    if turn_ttfts:
+        output.ttft = sum(turn_ttfts) / len(turn_ttfts)
+        # 将每轮的TTFT数据存储在itl字段中（用于调试和详细分析）
+        output.itl = turn_ttfts.copy()
+    else:
+        output.ttft = 0.0
+        
     return output
 
 
@@ -675,7 +755,10 @@ def calculate_metrics(
                 tokenizer.encode(outputs[i].generated_text, add_special_tokens=False)
             )
             retokenized_output_lens.append(retokenized_output_len)
-            if benchmark != "multi_turn":
+            if benchmark == "multi_turn":
+                # 对于multiturn，从output中获取已计算好的prompt长度
+                total_input += outputs[i].prompt_len
+            else:
                 prompt_len = input_requests[i]["prompt_len"]
                 total_input += prompt_len
             if output_len > 1:

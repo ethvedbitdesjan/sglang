@@ -72,7 +72,7 @@ class LoraRadixCache(RadixCache):
         self.protected_size_ = 0
 
         # cache policy option
-        self.cache_policy_option = CachePolicyType.LFU
+        self.cache_policy_option = CachePolicyType.LRU
         self.disable = False
         self.tree_sieve_cache_policy: TreeSieve = TreeSieve(
             adapter_based_radix_tree=self.root_node,

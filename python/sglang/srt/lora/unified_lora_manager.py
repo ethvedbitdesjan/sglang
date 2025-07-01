@@ -125,7 +125,8 @@ class UnifiedLoRAManager:
     def prepare_lora_batch(self, forward_batch: ForwardBatch):
         # load active loras into lora memory pool
         cur_uids = set(forward_batch.lora_paths)
-        assert len(cur_uids) <= self.max_loras_per_batch
+        # Remove max_loras_per_batch limitation for unified LoRA
+        # assert len(cur_uids) <= self.max_loras_per_batch
         self.memory_pool.prepare_lora_batch(
             forward_batch.lora_paths,
             cur_uids,
